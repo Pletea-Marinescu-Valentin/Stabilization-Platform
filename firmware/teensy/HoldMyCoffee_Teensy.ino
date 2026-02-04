@@ -138,6 +138,10 @@ float last_motor_pitch_pos = 0.0f;
 float last_motor_roll_pos  = 0.0f;
 float last_motor_height_pos = 0.0f;
 
+#define LOOP_INTERVAL_MS 20
+unsigned long current_time = 0;
+unsigned long last_time = 0;
+
 void addDistanceSample(float new_sample) {
     distance_buffer[buffer_index] = new_sample;
     buffer_index = (buffer_index + 1) % FILTER_SIZE;
@@ -176,96 +180,119 @@ void setup() {
 }
 
 void loop() {
+    current_time = millis();
 
-    if (Serial.available()) {
-        char c = Serial.read();
-        if (c == '1') { controlMode = 1; Serial.println("Control Mode: PID"); }
-        else if (c == '2') { controlMode = 2; Serial.println("Control Mode: RST"); }
-        else if (c == '3') { controlMode = 3; Serial.println("Control Mode: LQG"); }
-        else if (c == '4') { controlMode = 4; Serial.println("Control Mode: Adaptive"); }
-    }
+    if (current_time - last_time >= LOOP_INTERVAL_MS) {
+        last_time = current_time;
 
-    if (Serial1.available()) {
-        String msg = Serial1.readStringUntil('\n');
-        msg.trim();
-        if (msg.startsWith("DIST:")) {
-            float val = msg.substring(5).toFloat();
-            if (val > 0.0f && val < 10000.0f) {
-                distance_from_uno = val;
-                addDistanceSample(val);
+        if (Serial.available()) {
+            char c = Serial.read();
+            if (c == '1') { controlMode = 1; Serial.println("Control Mode: PID"); }
+            else if (c == '2') { controlMode = 2; Serial.println("Control Mode: RST"); }
+            else if (c == '3') { controlMode = 3; Serial.println("Control Mode: LQG"); }
+            else if (c == '4') { controlMode = 4; Serial.println("Control Mode: Adaptive"); }
+        }
+
+        if (Serial1.available()) {
+            String msg = Serial1.readStringUntil('\n');
+            msg.trim();
+            if (msg.startsWith("DIST:")) {
+                float val = msg.substring(5).toFloat();
+                if (val > 0.0f && val < 10000.0f) {
+                    distance_from_uno = val;
+                    addDistanceSample(val);
+                }
             }
         }
+
+        imu::Quaternion quat = bno.getQuat();
+        float w = quat.w(), x = quat.x(), y = quat.y(), z = quat.z();
+        float sinr_cosp = 2.0f * (w * x + y * z);
+        float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
+        float roll_rad = atan2(sinr_cosp, cosr_cosp);
+        float sinp = 2.0f * (w * y - z * x);
+        float pitch_rad = (abs(sinp) >= 1) ? copysign(M_PI / 2, sinp) : asin(sinp);
+        float roll_deg  = roll_rad  * 180.0f / M_PI;
+        float pitch_deg = pitch_rad * 180.0f / M_PI;
+
+        // Loop timing measurement
+        static unsigned long loop_start = 0;
+        static unsigned long loop_count = 0;
+        static float avg_period_ms = 0;
+        unsigned long now_loop = micros();
+        if (loop_start > 0) {
+            float period_ms = (now_loop - loop_start) / 1000.0f;
+            avg_period_ms = avg_period_ms * 0.99f + period_ms * 0.01f;
+            loop_count++;
+            if (loop_count % 100 == 0) {
+                Serial.print("Avg loop period: ");
+                Serial.print(avg_period_ms);
+                Serial.print(" ms, Freq: ");
+                Serial.print(1000.0f / avg_period_ms);
+                Serial.println(" Hz");
+            }
+        }
+        loop_start = now_loop;
+
+        float avg_distance = getAverageDistance();
+        unsigned long now = micros();
+        float dt = (prev_time > 0) ? (now - prev_time) / 1e6f : 0.002f;
+        prev_time = now;
+        if (dt > 0.1f) dt = 0.002f;
+
+        if (controlMode == 1) runPID(pitch_deg, roll_deg, dt);
+        else if (controlMode == 2) runRST(pitch_deg, roll_deg, dt);
+        else if (controlMode == 3) runLQG(pitch_deg, roll_deg, dt);
+        else if (controlMode == 4) runAdaptive(pitch_deg, roll_deg, dt);
+
+        /*
+        // HEIGHT control
+        if (moteus_hight.SetQuery() && !isnan(moteus_hight.last_result().values.position)) {
+            last_ok_time = millis();
+            float raw_error_mm = TARGET_DISTANCE - avg_distance;
+            const float alpha = 0.5f;
+            smoothed_error_mm = smoothed_error_mm * (1.0f - alpha) + raw_error_mm * alpha;
+
+            float target_pos;
+            if (fabs(smoothed_error_mm) > 5.0f)
+                target_pos = constrain(smoothed_error_mm * MM_TO_ROT, MIN_POS, MAX_POS);
+            else
+                target_pos = moteus_hight.last_result().values.position;
+
+            last_motor_height_pos = moteus_hight.last_result().values.position;
+
+            Moteus::PositionMode::Command h_cmd;
+            h_cmd.position = target_pos;
+            h_cmd.maximum_torque = MAX_TORQUE;
+            moteus_hight.BeginPosition(h_cmd);
+        }
+        */
+
+        if (!isnan(moteus_pitch.last_result().values.position))
+            last_motor_pitch_pos = moteus_pitch.last_result().values.position;
+        if (!isnan(moteus_roll.last_result().values.position))
+            last_motor_roll_pos = moteus_roll.last_result().values.position;
+
+        writeLog(
+            millis(),
+            controlMode,
+            pitch_deg,
+            roll_deg,
+            (last_target_pitch_pos * 180.0f / M_PI),
+            (last_target_roll_pos  * 180.0f / M_PI),
+            last_u_pitch,
+            last_u_roll,
+            last_motor_pitch_pos,
+            last_motor_roll_pos
+        );
+        if (millis() % 100 == 0) logFile.flush();
+
+        moteus_pitch.Poll();
+        moteus_roll.Poll();
+        //moteus_hight.Poll();
     }
 
-    imu::Quaternion quat = bno.getQuat();
-    float w = quat.w(), x = quat.x(), y = quat.y(), z = quat.z();
-    float sinr_cosp = 2.0f * (w * x + y * z);
-    float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
-    float roll_rad = atan2(sinr_cosp, cosr_cosp);
-    float sinp = 2.0f * (w * y - z * x);
-    float pitch_rad = (abs(sinp) >= 1) ? copysign(M_PI / 2, sinp) : asin(sinp);
-    float roll_deg  = roll_rad  * 180.0f / M_PI;
-    float pitch_deg = pitch_rad * 180.0f / M_PI;
-
-    Serial.print(pitch_deg);
-    Serial.print(" ");
-    Serial.println(roll_deg);
-
-    float avg_distance = getAverageDistance();
-    unsigned long now = micros();
-    float dt = (prev_time > 0) ? (now - prev_time) / 1e6f : 0.002f;
-    prev_time = now;
-    if(dt > 0.1f) dt = 0.002f; // Safety check for first loop or delays
-
-    if (controlMode == 1) runPID(pitch_deg, roll_deg, dt);
-    else if (controlMode == 2) runRST(pitch_deg, roll_deg, dt);
-    else if (controlMode == 3) runLQG(pitch_deg, roll_deg, dt);
-    else if (controlMode == 4) runAdaptive(pitch_deg, roll_deg, dt);
-
-    // HEIGHT control
-    if (moteus_hight.SetQuery() && !isnan(moteus_hight.last_result().values.position)) {
-        last_ok_time = millis();
-        float raw_error_mm = TARGET_DISTANCE - avg_distance;
-        const float alpha = 0.5f;
-        smoothed_error_mm = smoothed_error_mm * (1.0f - alpha) + raw_error_mm * alpha;
-
-        float target_pos;
-        if (fabs(smoothed_error_mm) > 5.0f)
-            target_pos = constrain(smoothed_error_mm * MM_TO_ROT, MIN_POS, MAX_POS);
-        else
-            target_pos = moteus_hight.last_result().values.position;
-
-        last_motor_height_pos = moteus_hight.last_result().values.position;
-
-        Moteus::PositionMode::Command h_cmd;
-        h_cmd.position = target_pos;
-        h_cmd.maximum_torque = MAX_TORQUE;
-        moteus_hight.BeginPosition(h_cmd);
-    }
-
-    if (!isnan(moteus_pitch.last_result().values.position))
-        last_motor_pitch_pos = moteus_pitch.last_result().values.position;
-    if (!isnan(moteus_roll.last_result().values.position))
-        last_motor_roll_pos = moteus_roll.last_result().values.position;
-
-    writeLog(
-        millis(),
-        controlMode,
-        pitch_deg,
-        roll_deg,
-        (last_target_pitch_pos * 180.0f / M_PI),
-        (last_target_roll_pos  * 180.0f / M_PI),
-        last_u_pitch,
-        last_u_roll,
-        last_motor_pitch_pos,
-        last_motor_roll_pos
-    );
-    if(millis() % 100 == 0) logFile.flush(); 
-
-    moteus_pitch.Poll();
-    moteus_roll.Poll();
-    moteus_hight.Poll();
-    delay(30);
+    delay(1);
 }
 
 // ==================== CONTROLLERS ====================
