@@ -47,12 +47,15 @@ void writeLog(unsigned long t_ms, int mode,
 
 float normalizeAngleDifference(float target, float current) {
     float diff = target - current;
-    while (diff > 180.0f) diff -= 360.0f;
-    while (diff < -180.0f) diff += 360.0f;
-    return diff;
+    return atan2f(sinf(diff * M_PI/180.0f),
+                  cosf(diff * M_PI/180.0f)) * 180.0f/M_PI;
 }
 
 const float MAX_STEP_PER_CYCLE = 0.35f;
+
+// Moteus mode values
+// kStopped = 0, kFault = 1, kPosition = 10, kPositionTimeout = 11
+#define MOTEUS_MODE_FAULT 1
 
 // PID Params
 #define PITCH_KP  0.039635f
@@ -70,10 +73,13 @@ Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 
 const float TARGET_PITCH = -0.2f;
 const float TARGET_ROLL  = -175.44f;
-const float TARGET_DISTANCE = 50.0f;
+const float TARGET_DISTANCE = 125.0f;
 const float MM_TO_ROT = 0.5f;
 const float MAX_POS = 0.5f;
 const float MIN_POS = -20.0f;
+
+const float ROLL_POS_MAX =  2.0f;
+const float ROLL_POS_MIN = -2.0f;
 
 float distance_from_uno = 0.0f;
 float pitch_integral = 0.0f;
@@ -142,6 +148,12 @@ float last_motor_height_pos = 0.0f;
 unsigned long current_time = 0;
 unsigned long last_time = 0;
 
+unsigned long last_poll_time = 0;
+
+float prev_roll_deg = 0.0f;
+bool roll_deg_initialized = false;
+const float MAX_ROLL_JUMP = 10.0f;
+
 void addDistanceSample(float new_sample) {
     distance_buffer[buffer_index] = new_sample;
     buffer_index = (buffer_index + 1) % FILTER_SIZE;
@@ -154,6 +166,29 @@ float getAverageDistance() {
     float sum = 0.0f;
     for (int i = 0; i < count; i++) sum += distance_buffer[i];
     return sum / count;
+}
+
+float safeRollTarget(float current_pos, float raw_target) {
+    float step = raw_target - current_pos;
+    if (fabsf(step) > MAX_STEP_PER_CYCLE) {
+        step = copysignf(MAX_STEP_PER_CYCLE, step);
+    }
+    float target = current_pos + step;
+    target = constrain(target, ROLL_POS_MIN, ROLL_POS_MAX);
+    return target;
+}
+
+void resetRollControllerState() {
+    roll_integral = 0.0f;
+    roll_prev_error = 0.0f;
+    u_roll_prev[0] = 0.0f;
+    u_roll_prev[1] = 0.0f;
+    e_roll_prev[0] = 0.0f;
+    x_hat_r[0] = 0.0f;
+    x_hat_r[1] = 0.0f;
+    u_prev_lqg_r = 0.0f;
+    K_adaptive_roll = 0.02f;
+    last_u_roll = 0.0f;
 }
 
 void setup() {
@@ -180,10 +215,17 @@ void setup() {
 }
 
 void loop() {
-    current_time = millis();
+    unsigned long now = micros();
 
-    if (current_time - last_time >= LOOP_INTERVAL_MS) {
-        last_time = current_time;
+    if (now - last_poll_time >= 5000) {
+        if (moteus_pitch.SetQuery()) moteus_pitch.Poll();
+        if (moteus_roll.SetQuery())  moteus_roll.Poll();
+        if (moteus_hight.SetQuery()) moteus_hight.Poll();
+        last_poll_time = now;
+    }
+
+    if (millis() - last_time >= LOOP_INTERVAL_MS) {
+        last_time = millis();
 
         if (Serial.available()) {
             char c = Serial.read();
@@ -215,6 +257,26 @@ void loop() {
         float roll_deg  = roll_rad  * 180.0f / M_PI;
         float pitch_deg = pitch_rad * 180.0f / M_PI;
 
+        if (roll_deg_initialized) {
+            float jump = normalizeAngleDifference(roll_deg, prev_roll_deg);
+            if (fabsf(jump) > MAX_ROLL_JUMP) {
+                roll_deg = prev_roll_deg;  
+            }
+        }
+        prev_roll_deg = roll_deg;
+        roll_deg_initialized = true;
+
+        {
+            int roll_mode = static_cast<int>(moteus_roll.last_result().values.mode);
+            if (roll_mode == MOTEUS_MODE_FAULT) {
+                Serial.println("!!! Roll motor FAULT — resetting...");
+                moteus_roll.SetStop();
+                delay(50);
+                resetRollControllerState();
+                return; 
+            }
+        }
+
         // Loop timing measurement
         static unsigned long loop_start = 0;
         static unsigned long loop_count = 0;
@@ -225,17 +287,17 @@ void loop() {
             avg_period_ms = avg_period_ms * 0.99f + period_ms * 0.01f;
             loop_count++;
             if (loop_count % 100 == 0) {
-                Serial.print("Avg loop period: ");
-                Serial.print(avg_period_ms);
-                Serial.print(" ms, Freq: ");
-                Serial.print(1000.0f / avg_period_ms);
-                Serial.println(" Hz");
+                //Serial.print("Avg loop period: ");
+                //Serial.print(avg_period_ms);
+                //Serial.print(" ms, Freq: ");
+                //Serial.print(1000.0f / avg_period_ms);
+                //Serial.println(" Hz");
             }
         }
         loop_start = now_loop;
 
         float avg_distance = getAverageDistance();
-        unsigned long now = micros();
+        now = micros();
         float dt = (prev_time > 0) ? (now - prev_time) / 1e6f : 0.002f;
         prev_time = now;
         if (dt > 0.1f) dt = 0.002f;
@@ -245,7 +307,6 @@ void loop() {
         else if (controlMode == 3) runLQG(pitch_deg, roll_deg, dt);
         else if (controlMode == 4) runAdaptive(pitch_deg, roll_deg, dt);
 
-        /*
         // HEIGHT control
         if (moteus_hight.SetQuery() && !isnan(moteus_hight.last_result().values.position)) {
             last_ok_time = millis();
@@ -259,6 +320,8 @@ void loop() {
             else
                 target_pos = moteus_hight.last_result().values.position;
 
+            Serial.println(target_pos);
+
             last_motor_height_pos = moteus_hight.last_result().values.position;
 
             Moteus::PositionMode::Command h_cmd;
@@ -266,7 +329,8 @@ void loop() {
             h_cmd.maximum_torque = MAX_TORQUE;
             moteus_hight.BeginPosition(h_cmd);
         }
-        */
+        
+
 
         if (!isnan(moteus_pitch.last_result().values.position))
             last_motor_pitch_pos = moteus_pitch.last_result().values.position;
@@ -286,10 +350,6 @@ void loop() {
             last_motor_roll_pos
         );
         if (millis() % 100 == 0) logFile.flush();
-
-        moteus_pitch.Poll();
-        moteus_roll.Poll();
-        //moteus_hight.Poll();
     }
 
     delay(1);
@@ -309,7 +369,7 @@ void runPID(float pitch_deg, float roll_deg, float dt) {
         (PITCH_KI * pitch_integral) +
         (PITCH_KD * pitch_derivative);
 
-    if (moteus_pitch.SetQuery() && !isnan(moteus_pitch.last_result().values.position)) {
+    if (!isnan(moteus_pitch.last_result().values.position)) {
         last_ok_time = millis();
         float current_pitch_pos = moteus_pitch.last_result().values.position;
         float pitch_correction_rad = pitch_correction_deg * M_PI / 180.0f;
@@ -327,18 +387,20 @@ void runPID(float pitch_deg, float roll_deg, float dt) {
     float roll_error = normalizeAngleDifference(TARGET_ROLL, roll_deg);
     roll_integral += roll_error * dt;
     roll_integral = constrain(roll_integral, -50.0f, 50.0f);
-    float roll_derivative = (roll_error - roll_prev_error) / dt;
+    float diff = normalizeAngleDifference(roll_error, roll_prev_error);
+    float roll_derivative = diff / dt;
     roll_prev_error = roll_error;
     float roll_correction_deg =
         (ROLL_KP * roll_error) +
         (ROLL_KI * roll_integral) +
         (ROLL_KD * roll_derivative);
 
-    if (moteus_roll.SetQuery() && !isnan(moteus_roll.last_result().values.position)) {
+    if (!isnan(moteus_roll.last_result().values.position)) {
         last_ok_time = millis();
         float current_roll_pos = moteus_roll.last_result().values.position;
         float roll_correction_rad = roll_correction_deg * M_PI / 180.0f;
-        float target_roll_pos = current_roll_pos - roll_correction_rad;
+        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
+        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
 
         last_u_roll = roll_correction_deg;
         last_target_roll_pos = target_roll_pos;
@@ -366,7 +428,7 @@ void runRST(float pitch_deg, float roll_deg, float dt) {
 
     e_pitch_prev[0] = e_pitch;
 
-    if (moteus_pitch.SetQuery() && !isnan(moteus_pitch.last_result().values.position)) {
+    if (!isnan(moteus_pitch.last_result().values.position)) {
         last_ok_time = millis();
         float current_pitch_pos = moteus_pitch.last_result().values.position;
         float pitch_correction_rad = u_pitch * M_PI / 180.0f;
@@ -395,11 +457,12 @@ void runRST(float pitch_deg, float roll_deg, float dt) {
 
     e_roll_prev[0] = e_roll;
 
-    if (moteus_roll.SetQuery() && !isnan(moteus_roll.last_result().values.position)) {
+    if (!isnan(moteus_roll.last_result().values.position)) {
         last_ok_time = millis();
         float current_roll_pos = moteus_roll.last_result().values.position;
         float roll_correction_rad = u_roll * M_PI / 180.0f;
-        float target_roll_pos = current_roll_pos - roll_correction_rad;
+        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
+        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
 
         last_u_roll = u_roll;
         last_target_roll_pos = target_roll_pos;
@@ -416,58 +479,59 @@ void runLQG(float pitch_deg, float roll_deg, float dt) {
     float x_pred_p[2];
     x_pred_p[0] = Ad_p[0][0]*x_hat_p[0] + Ad_p[0][1]*x_hat_p[1] + Bd_p[0]*u_prev_lqg_p;
     x_pred_p[1] = Ad_p[1][0]*x_hat_p[0] + Ad_p[1][1]*x_hat_p[1] + Bd_p[1]*u_prev_lqg_p;
-    
+
     float y_pred_p = Cd_p[0]*x_pred_p[0] + Cd_p[1]*x_pred_p[1];
     float innov_p = pitch_deg - y_pred_p;
-    
+
     x_hat_p[0] = x_pred_p[0] + L_p[0]*innov_p;
     x_hat_p[1] = x_pred_p[1] + L_p[1]*innov_p;
-    
+
     float e_p = TARGET_PITCH - pitch_deg;
     float u_pitch = K_lqg_p[0]*e_p - K_lqg_p[1]*x_hat_p[1];
-    
+
     u_prev_lqg_p = u_pitch;
-    
-    if (moteus_pitch.SetQuery() && !isnan(moteus_pitch.last_result().values.position)) {
+
+    if (!isnan(moteus_pitch.last_result().values.position)) {
         last_ok_time = millis();
         float current_pitch_pos = moteus_pitch.last_result().values.position;
         float pitch_correction_rad = u_pitch * M_PI / 180.0f;
         float target_pitch_pos = current_pitch_pos - pitch_correction_rad;
-        
+
         last_u_pitch = u_pitch;
         last_target_pitch_pos = target_pitch_pos;
-        
+
         Moteus::PositionMode::Command cmd;
         cmd.position = target_pitch_pos;
         cmd.maximum_torque = MAX_TORQUE;
         moteus_pitch.BeginPosition(cmd);
     }
-    
+
     float x_pred_r[2];
     x_pred_r[0] = Ad_r[0][0]*x_hat_r[0] + Ad_r[0][1]*x_hat_r[1] + Bd_r[0]*u_prev_lqg_r;
     x_pred_r[1] = Ad_r[1][0]*x_hat_r[0] + Ad_r[1][1]*x_hat_r[1] + Bd_r[1]*u_prev_lqg_r;
-    
+
     float y_pred_r = Cd_r[0]*x_pred_r[0] + Cd_r[1]*x_pred_r[1];
-    
+
     float innov_r = roll_deg - y_pred_r;
-    
+
     x_hat_r[0] = x_pred_r[0] + L_r[0]*innov_r;
     x_hat_r[1] = x_pred_r[1] + L_r[1]*innov_r;
-    
+
     float e_r = normalizeAngleDifference(TARGET_ROLL, roll_deg);
     float u_roll = K_lqg_r[0]*e_r - K_lqg_r[1]*x_hat_r[1];
-    
+
     u_prev_lqg_r = u_roll;
-    
-    if (moteus_roll.SetQuery() && !isnan(moteus_roll.last_result().values.position)) {
+
+    if (!isnan(moteus_roll.last_result().values.position)) {
         last_ok_time = millis();
         float current_roll_pos = moteus_roll.last_result().values.position;
         float roll_correction_rad = u_roll * M_PI / 180.0f;
-        float target_roll_pos = current_roll_pos - roll_correction_rad;
-        
+        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
+        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
+
         last_u_roll = u_roll;
         last_target_roll_pos = target_roll_pos;
-        
+
         Moteus::PositionMode::Command cmd;
         cmd.position = target_roll_pos;
         cmd.maximum_torque = MAX_TORQUE;
@@ -489,7 +553,7 @@ void runAdaptive(float pitch_deg, float roll_deg, float dt) {
     K_adaptive_pitch += ADAPTATION_RATE * e_track_pitch * e_pitch * dt;
     K_adaptive_pitch = constrain(K_adaptive_pitch, 0.01f, 0.15f);
 
-    if (moteus_pitch.SetQuery() && !isnan(moteus_pitch.last_result().values.position)) {
+    if (!isnan(moteus_pitch.last_result().values.position)) {
         last_ok_time = millis();
         float current_pitch_pos = moteus_pitch.last_result().values.position;
         float pitch_correction_rad = u_pitch * M_PI / 180.0f;
@@ -515,11 +579,12 @@ void runAdaptive(float pitch_deg, float roll_deg, float dt) {
     K_adaptive_roll += ADAPTATION_RATE * e_track_roll * e_roll * dt;
     K_adaptive_roll = constrain(K_adaptive_roll, 0.01f, 0.15f);
 
-    if (moteus_roll.SetQuery() && !isnan(moteus_roll.last_result().values.position)) {
+    if (!isnan(moteus_roll.last_result().values.position)) {
         last_ok_time = millis();
         float current_roll_pos = moteus_roll.last_result().values.position;
         float roll_correction_rad = u_roll * M_PI / 180.0f;
-        float target_roll_pos = current_roll_pos - roll_correction_rad;
+        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
+        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
 
         last_u_roll = u_roll;
         last_target_roll_pos = target_roll_pos;
