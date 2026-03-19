@@ -1,6 +1,6 @@
 clear; clc; close all;
 
-files = {"log_pid.mat"; "log_rst.mat"; "log_lqr.mat"; "log_adaptive.mat"};
+files = {"log_pid.mat"; "log_rst.mat"; "log_lqg.mat"; "log_adaptive.mat"};
 names  = {"PID","RST","LQG","MRAC"}; 
 colors = lines(4);
 
@@ -43,10 +43,10 @@ for i = 1:N
     disp_metrics_disturbance(all_metrics(i).dist_roll, "Roll (Disturbance)");
 end
 
-t_steady_start = 0;
-t_steady_end   = 20;
-t_dist_start   = 20;
-t_dist_end     = 60;
+t_steady_start = 4;
+t_steady_end   = 22;
+t_dist_start   = 22;
+t_dist_end     = 85;
 
 t_ref = all_results{1}.t;
 t_max = max(t_ref);
