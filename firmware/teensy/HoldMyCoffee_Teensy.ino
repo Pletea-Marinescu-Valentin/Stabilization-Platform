@@ -541,20 +541,29 @@ void runLQG(float pitch_deg, float roll_deg, float dt) {
 
 // ---- Adaptive ----
 void runAdaptive(float pitch_deg, float roll_deg, float dt) {
-    // === PITCH ===
+    const float tau = 0.5f;
+    const float lambda = 0.5f;       
+    const float K_nominal = 0.02f;
+
+    // ==================== PITCH ====================
     float e_pitch = TARGET_PITCH - pitch_deg;
-    float tau = 0.5f;
+
     adaptive_pitch_ref += dt/tau * (TARGET_PITCH - adaptive_pitch_ref);
     float e_track_pitch = adaptive_pitch_ref - pitch_deg;
 
-    float u_pitch = K_adaptive_pitch * e_pitch;
-    u_pitch = constrain(u_pitch, -10.0f, 10.0f);
+    float e_pitch_n = e_pitch / 180.0f;
+    float e_track_pitch_n = e_track_pitch / 180.0f;
 
-    K_adaptive_pitch += ADAPTATION_RATE * e_track_pitch * e_pitch * dt;
-    K_adaptive_pitch = constrain(K_adaptive_pitch, 0.01f, 0.15f);
+    if (fabs(e_pitch) < 60.0f) {
+        K_adaptive_pitch += ADAPTATION_RATE * e_track_pitch_n * e_pitch_n * dt
+                            - lambda * (K_adaptive_pitch - K_nominal) * dt;
+    }
+
+    K_adaptive_pitch = constrain(K_adaptive_pitch, 0.01f, 0.1f);
+    float u_pitch = K_adaptive_pitch * e_track_pitch;
+    u_pitch = constrain(u_pitch, -5.0f, 5.0f);
 
     if (!isnan(moteus_pitch.last_result().values.position)) {
-        last_ok_time = millis();
         float current_pitch_pos = moteus_pitch.last_result().values.position;
         float pitch_correction_rad = u_pitch * M_PI / 180.0f;
         float target_pitch_pos = current_pitch_pos - pitch_correction_rad;
@@ -568,19 +577,25 @@ void runAdaptive(float pitch_deg, float roll_deg, float dt) {
         moteus_pitch.BeginPosition(cmd);
     }
 
-    // === ROLL ===
+    // ==================== ROLL ====================
     float e_roll = normalizeAngleDifference(TARGET_ROLL, roll_deg);
+
     adaptive_roll_ref += dt/tau * (TARGET_ROLL - adaptive_roll_ref);
     float e_track_roll = normalizeAngleDifference(adaptive_roll_ref, roll_deg);
 
-    float u_roll = K_adaptive_roll * e_roll;
-    u_roll = constrain(u_roll, -10.0f, 10.0f);
+    float e_roll_n = e_roll / 180.0f;
+    float e_track_roll_n = e_track_roll / 180.0f;
 
-    K_adaptive_roll += ADAPTATION_RATE * e_track_roll * e_roll * dt;
-    K_adaptive_roll = constrain(K_adaptive_roll, 0.01f, 0.15f);
+    if (fabs(e_roll) < 60.0f) {
+        K_adaptive_roll += ADAPTATION_RATE * e_track_roll_n * e_roll_n * dt
+                           - lambda * (K_adaptive_roll - K_nominal) * dt;
+    }
+
+    K_adaptive_roll = constrain(K_adaptive_roll, 0.01f, 0.1f);
+    float u_roll = K_adaptive_roll * e_track_roll;
+    u_roll = constrain(u_roll, -5.0f, 5.0f);
 
     if (!isnan(moteus_roll.last_result().values.position)) {
-        last_ok_time = millis();
         float current_roll_pos = moteus_roll.last_result().values.position;
         float roll_correction_rad = u_roll * M_PI / 180.0f;
         float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
