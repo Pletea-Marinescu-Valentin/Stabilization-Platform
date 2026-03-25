@@ -1,6 +1,6 @@
 clear; clc; close all;
 
-filename = "log_adaptive.csv";
+filename = "log_adaptive.csv"; % name of the csv file
 
 TARGET_PITCH = -0.2;
 TARGET_ROLL  = -175.44;
@@ -18,8 +18,8 @@ u_roll  = data.control_roll;
 e_pitch = pitch - TARGET_PITCH;
 e_roll  = wrapTo180(roll - TARGET_ROLL);
 
-steady_range     = t <= 20;
-disturb_range    = t > 20;
+steady_range     = t <= 22 & t > 4;
+disturb_range    = t > 22;
 
 metrics_steady_pitch  = compute_metrics_steady(t(steady_range), e_pitch(steady_range), u_pitch(steady_range));
 metrics_steady_roll   = compute_metrics_steady(t(steady_range), e_roll(steady_range),  u_roll(steady_range));
