@@ -95,6 +95,10 @@ bool buffer_filled = false;
 
 int controlMode = 1;
 
+// BLE serial (HM-10 module on Serial3: RX3=15, TX3=14)
+#define BLE_SERIAL Serial3
+#define BLE_BAUD 9600
+
 // RST parameters
 float R_pitch[2] = {0.0063f, 0.0089f};
 float S_pitch[2] = {0.0719f, -0.1039f};
@@ -197,6 +201,7 @@ void setup() {
     while (!Serial && (millis() - startWait < 2000)) {}
 
     Serial1.begin(115200);
+    BLE_SERIAL.begin(BLE_BAUD);
 
     initSD();
 
@@ -233,6 +238,15 @@ void loop() {
             else if (c == '2') { controlMode = 2; Serial.println("Control Mode: RST"); }
             else if (c == '3') { controlMode = 3; Serial.println("Control Mode: LQG"); }
             else if (c == '4') { controlMode = 4; Serial.println("Control Mode: Adaptive"); }
+        }
+
+        // BLE: receive controller mode commands
+        if (BLE_SERIAL.available()) {
+            char c = BLE_SERIAL.read();
+            if (c == '1') { controlMode = 1; BLE_SERIAL.println("MODE:PID"); }
+            else if (c == '2') { controlMode = 2; BLE_SERIAL.println("MODE:RST"); }
+            else if (c == '3') { controlMode = 3; BLE_SERIAL.println("MODE:LQG"); }
+            else if (c == '4') { controlMode = 4; BLE_SERIAL.println("MODE:Adaptive"); }
         }
 
         if (Serial1.available()) {
@@ -350,6 +364,27 @@ void loop() {
             last_motor_roll_pos
         );
         if (millis() % 100 == 0) logFile.flush();
+
+        // BLE telemetry output
+        // Format: T,<time_ms>,<mode>,<pitch>,<roll>,<target_pitch>,<target_roll>,<u_pitch>,<u_roll>,<motor_pitch>,<motor_roll>,<height>,<distance>\n
+        {
+            char buf[160];
+            snprintf(buf, sizeof(buf),
+                "T,%lu,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.1f\n",
+                millis(),
+                controlMode,
+                pitch_deg,
+                roll_deg,
+                last_u_pitch,
+                last_u_roll,
+                (last_target_pitch_pos * 180.0f / (float)M_PI),
+                (last_target_roll_pos  * 180.0f / (float)M_PI),
+                last_motor_pitch_pos,
+                last_motor_roll_pos,
+                last_motor_height_pos,
+                avg_distance);
+            BLE_SERIAL.print(buf);
+        }
     }
 
     delay(1);
