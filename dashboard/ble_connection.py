@@ -5,7 +5,7 @@ Connects to HM-10 BLE module on Teensy 4.1 and parses telemetry.
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Callable
 
 from bleak import BleakClient, BleakScanner
@@ -85,22 +85,23 @@ class BLEConnection:
     async def scan(self, timeout: float = 5.0) -> list[BLEDevice]:
         """Scan for BLE devices."""
         devices = await BleakScanner.discover(timeout=timeout)
-        # Filter for likely HM-10 devices
-        results = []
-        for d in devices:
-            name = d.name or ""
-            if name.upper().startswith(("HM", "BT", "BLE", "HOLD", "MLT")):
-                results.insert(0, d)
-            else:
-                results.append(d)
-        return results
+        # Put HM-10-like devices first so selection is easier.
+        def score_device(d: BLEDevice) -> int:
+            name = (d.name or "").upper()
+            score = 0
+            if "HMSOFT" in name:
+                score += 100
+            if "HM" in name or "AT-09" in name or "MLT" in name:
+                score += 50
+            return score
+
+        return sorted(devices, key=score_device, reverse=True)
 
     async def connect(self, device: BLEDevice):
-        """Connect to a BLE device."""
+        """Connect to a BLE device using the BLEDevice object directly (avoids Windows address issues)."""
         self.device = device
-        self.client = BleakClient(
-            device, disconnected_callback=self._on_disconnect
-        )
+        # Pass the BLEDevice object directly — avoids find_device_by_address failures on Windows
+        self.client = BleakClient(device, disconnected_callback=self._on_disconnect)
         await self.client.connect()
         self.connected = True
         if self._on_connection_changed:

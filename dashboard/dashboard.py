@@ -283,9 +283,17 @@ class ScanDialog(QDialog):
         self.device_list.clear()
         for d in devices:
             name = d.name or "Unknown"
-            self.device_list.addItem(f"{name}  [{d.address}]")
+            address = getattr(d, "address", "?")
+            rssi_raw = getattr(d, "rssi", None)
+            rssi_text = f"{rssi_raw} dBm" if rssi_raw is not None else "n/a"
+            label = f"{name}  [{address}]  RSSI:{rssi_text}"
+            if "HM" in name.upper() or "AT-09" in name.upper() or "HMSOFT" in name.upper():
+                label = "[LIKELY HM-10] " + label
+            self.device_list.addItem(label)
         self.scan_btn.setEnabled(True)
-        self.status_label.setText(f"Found {len(devices)} device(s)")
+        self.status_label.setText(
+            f"Found {len(devices)} device(s). Pick [LIKELY HM-10] or HMSoft/AT-09 with strongest RSSI."
+        )
 
     def _on_accept(self):
         idx = self.device_list.currentRow()
