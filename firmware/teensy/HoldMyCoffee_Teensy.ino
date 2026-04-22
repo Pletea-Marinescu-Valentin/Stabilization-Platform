@@ -139,6 +139,8 @@ float adaptive_roll_ref = 0.0f;
 
 float smoothed_error_mm = 0.0f;
 unsigned long last_ok_time = 0;
+unsigned long last_ble_time = 0;
+#define BLE_INTERVAL_MS 100   // 10 Hz — fits comfortably in 9600 baud
 
 float last_u_pitch = 0.0f;
 float last_u_roll  = 0.0f;
@@ -334,7 +336,7 @@ void loop() {
             else
                 target_pos = moteus_hight.last_result().values.position;
 
-            Serial.println(target_pos);
+            // Serial.println(target_pos);  // disabled: pollutes telemetry stream
 
             last_motor_height_pos = moteus_hight.last_result().values.position;
 
@@ -365,12 +367,12 @@ void loop() {
         );
         if (millis() % 100 == 0) logFile.flush();
 
-        // BLE telemetry output
-        // Format: T,<time_ms>,<mode>,<pitch>,<roll>,<target_pitch>,<target_roll>,<u_pitch>,<u_roll>,<motor_pitch>,<motor_roll>,<height>,<distance>\n
-        {
-            char buf[160];
+        // BLE telemetry output — rate-limited to BLE_INTERVAL_MS to stay within 9600 baud budget
+        if (millis() - last_ble_time >= BLE_INTERVAL_MS) {
+            last_ble_time = millis();
+            char buf[96];
             snprintf(buf, sizeof(buf),
-                "T,%lu,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.1f\n",
+                "T,%lu,%d,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.0f\n",
                 millis(),
                 controlMode,
                 pitch_deg,
@@ -384,6 +386,7 @@ void loop() {
                 last_motor_height_pos,
                 avg_distance);
             BLE_SERIAL.print(buf);
+            Serial.print(buf);  // USB telemetry — readable by dashboard over COM port
         }
     }
 
