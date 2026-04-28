@@ -1,9 +1,4 @@
-# Hold My Coffee - Beverage Stabilization Platform
-
-**Authors:** Valentin Pletea-Marinescu, Sebastian-Alexandru Matei, Teodor-Alexandru Dicu, Severus-Constantin Olteanu  
-National University of Science and Technology POLITEHNICA Bucharest, Romania
-
----
+# Hold My Coffee - Beverage Stabilization Platfor
 
 ## Overview
 
