@@ -1,94 +1,157 @@
 #include <Servo.h>
 
-#define PPM_PIN 2
-#define CHANNELS 8
+Servo servo1;
+Servo servo2;
+Servo servo3;
 
-volatile unsigned int ppm[CHANNELS];
-volatile byte channel = 0;
-volatile unsigned long lastMicros = 0;
-
-Servo servo1, servo2, servo3;
-
-float s1Curr = 20, s2Curr = 20, s3Curr = 160;
-int s1Target, s2Target, s3Target;
-
-unsigned long lastMoveTime = 0;
-int moveSpeed = 35;
-unsigned long lastDebug = 0;
+bool experimentDone = false;
 
 void setup() {
-  Serial.begin(115200);
-  pinMode(PPM_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PPM_PIN), readPPM, RISING);
+
+  delay(1000);
+
+  servo1.write(20);
   servo1.attach(5);
+
+  servo2.write(20);
   servo2.attach(11);
+
+  servo3.write(160);
   servo3.attach(9);
-  servo1.write(s1Curr);
-  servo2.write(s2Curr);
-  servo3.write(s3Curr);
-  delay(500);
+
+  delay(1000);
 }
 
 void loop() {
-  noInterrupts();
-  int ch3 = ppm[2];
-  int ch4 = ppm[3];
-  int ch6 = ppm[5];
-  interrupts();
 
-  if (ch6 < 1250) {
-    s1Target = 20;
-    s2Target = 20;
-    s3Target = 160;
-  } else if (ch6 <= 1750) {
-    s1Target = 45;
-    s2Target = 45;
-    s3Target = 130;
-  } else {
-    s1Target = map(constrain(ch4, 1330, 1670), 1330, 1670, 40, 60);
-    s2Target = map(constrain(ch4, 1330, 1670), 1330, 1670, 60, 40);
-    s3Target = map(constrain(ch3, 1100, 1900), 1100, 1900, 110, 135);
-  }
+  if (experimentDone) return;
 
-  if (millis() - lastMoveTime >= moveSpeed) {
-    lastMoveTime = millis();
-    if (s1Curr < s1Target) s1Curr++;
-    else if (s1Curr > s1Target) s1Curr--;
-    if (s2Curr < s2Target) s2Curr++;
-    else if (s2Curr > s2Target) s2Curr--;
-    if (s3Curr < s3Target) s3Curr++;
-    else if (s3Curr > s3Target) s3Curr--;
-    servo1.write((int)s1Curr);
-    servo2.write((int)s2Curr);
-    servo3.write((int)s3Curr);
-  }
+  moveSingle(servo1, 20, 45, 35);
+  delay(1500);
+  moveSingle(servo1, 45, 20, 35);
+  delay(1500);
 
-  if (millis() - lastDebug > 200) {
-    lastDebug = millis();
-    Serial.print("CH3: "); Serial.print(ch3);
-    Serial.print(" | CH4: "); Serial.print(ch4);
-    Serial.print(" | CH6: "); Serial.print(ch6);
-    Serial.print(" || S1: "); Serial.print((int)s1Curr);
-    Serial.print(" S2: "); Serial.print((int)s2Curr);
-    Serial.print(" S3: "); Serial.print((int)s3Curr);
-    Serial.print(" | MODE: ");
-    if (ch6 < 1250) Serial.print("SAFE");
-    else if (ch6 <= 1750) Serial.print("MID");
-    else Serial.print("MANUAL");
-    Serial.println();
+  moveSingle(servo2, 20, 45, 35);
+  delay(1500);
+  moveSingle(servo2, 45, 20, 35);
+  delay(1500);
+
+  moveSingle(servo3, 160, 125, 35);
+  delay(1500);
+  moveSingle(servo3, 125, 160, 35);
+  delay(1500);
+
+  movePair(servo1, 20, 45, servo2, 20, 45, 35);
+  delay(1500);
+  movePair(servo1, 45, 20, servo2, 45, 20, 35);
+  delay(1500);
+
+  movePair(servo1, 20, 45, servo3, 160, 125, 35);
+  delay(1500);
+  movePair(servo1, 45, 20, servo3, 125, 160, 35);
+  delay(1500);
+
+  movePair(servo2, 20, 45, servo3, 160, 125, 35);
+  delay(1500);
+  movePair(servo2, 45, 20, servo3, 125, 160, 35);
+  delay(1500);
+
+  move3Servos(20, 45, 20, 45, 160, 125, 35);
+  delay(3000);
+
+  moveSingle(servo1, 45, 75, 35);
+  delay(1500);
+  moveSingle(servo1, 75, 45, 35);
+  delay(1500);
+
+  moveSingle(servo2, 45, 75, 35);
+  delay(1500);
+  moveSingle(servo2, 75, 45, 35);
+  delay(1500);
+
+  moveSingle(servo3, 125, 100, 35);
+  delay(1500);
+  moveSingle(servo3, 100, 125, 35);
+  delay(1500);
+
+  movePair(servo1, 45, 75, servo2, 45, 75, 35);
+  delay(1500);
+  movePair(servo1, 75, 45, servo2, 75, 45, 35);
+  delay(1500);
+
+  movePair(servo1, 45, 75, servo3, 125, 100, 35);
+  delay(1500);
+  movePair(servo1, 75, 45, servo3, 100, 125, 35);
+  delay(1500);
+
+  movePair(servo2, 45, 75, servo3, 125, 100, 35);
+  delay(1500);
+  movePair(servo2, 75, 45, servo3, 100, 125, 35);
+
+  experimentDone = true;
+}
+
+void moveSingle(Servo &s, int posStart, int posEnd, int speedDelay) {
+
+  int pos = posStart;
+
+  while (pos != posEnd) {
+
+    if (pos < posEnd) pos++;
+    else if (pos > posEnd) pos--;
+
+    s.write(pos);
+
+    delay(speedDelay);
   }
 }
 
-void readPPM() {
-  unsigned long now = micros();
-  unsigned int diff = now - lastMicros;
-  lastMicros = now;
-  if (diff > 3000) {
-    channel = 0;
-  } else {
-    if (channel < CHANNELS) {
-      ppm[channel] = diff;
-      channel++;
-    }
+void movePair(Servo &sa, int saStart, int saEnd,
+              Servo &sb, int sbStart, int sbEnd,
+              int speedDelay) {
+
+  int posA = saStart;
+  int posB = sbStart;
+
+  while (posA != saEnd || posB != sbEnd) {
+
+    if (posA < saEnd) posA++;
+    else if (posA > saEnd) posA--;
+
+    if (posB < sbEnd) posB++;
+    else if (posB > sbEnd) posB--;
+
+    sa.write(posA);
+    sb.write(posB);
+
+    delay(speedDelay);
+  }
+}
+
+void move3Servos(int s1Start, int s1End,
+                 int s2Start, int s2End,
+                 int s3Start, int s3End,
+                 int speedDelay) {
+
+  int pos1 = s1Start;
+  int pos2 = s2Start;
+  int pos3 = s3Start;
+
+  while (pos1 != s1End || pos2 != s2End || pos3 != s3End) {
+
+    if (pos1 < s1End) pos1++;
+    else if (pos1 > s1End) pos1--;
+
+    if (pos2 < s2End) pos2++;
+    else if (pos2 > s2End) pos2--;
+
+    if (pos3 < s3End) pos3++;
+    else if (pos3 > s3End) pos3--;
+
+    servo1.write(pos1);
+    servo2.write(pos2);
+    servo3.write(pos3);
+
+    delay(speedDelay);
   }
 }
