@@ -1,9 +1,3 @@
-"""
-HoldMyCoffee Dashboard
-Real-time BLE monitoring and control dashboard for the stabilization platform.
-Qt6 + PyQtGraph + OpenGL 3D visualization.
-"""
-
 import sys
 import math
 import asyncio
@@ -196,7 +190,6 @@ QScrollBar::handle:vertical {{
 }}
 """
 
-
 class DeviationBar(QWidget):
     def __init__(self, color: str, parent=None):
         super().__init__(parent)
@@ -220,7 +213,6 @@ class DeviationBar(QWidget):
             grad.setColorAt(1.0, self._color)
             p.fillRect(0, 0, bar_w, r.height(), QBrush(grad))
         p.end()
-
 
 class MetricCard(QFrame):
     def __init__(self, label: str, unit: str = "°", color: str = ACCENT_BLUE,
@@ -310,7 +302,6 @@ class MetricCard(QFrame):
         else:
             self._bar.set_fraction(1.0)
 
-
 class PulseIndicator(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -345,9 +336,7 @@ class PulseIndicator(QWidget):
         p.drawEllipse(1, 1, 8, 8)
         p.end()
 
-
 class LiveStatsWidget(QFrame):
-    """Rolling performance metrics updated at ~5 Hz."""
 
     WINDOW = 500
 
@@ -453,9 +442,7 @@ class LiveStatsWidget(QFrame):
                 f"color: {c}; font-size: 12px; font-weight: 600;"
             )
 
-
 class ControllerInfoPanel(QFrame):
-    """Describes the currently active controller; used for jury / demo context."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -520,7 +507,6 @@ class ControllerInfoPanel(QFrame):
             f"padding: 2px 6px; border-radius: 4px; "
             f"background: {c}22; color: {c}; border: 1px solid {c}55;"
         )
-
 
 class ScanDialog(QDialog):
     device_selected = pyqtSignal(object)
@@ -607,7 +593,6 @@ class ScanDialog(QDialog):
             self.device_selected.emit(self.devices[idx])
             self.accept()
 
-
 class Dashboard(QMainWindow):
     _sig_connect    = pyqtSignal(object)
     _sig_disconnect = pyqtSignal()
@@ -674,7 +659,6 @@ class Dashboard(QMainWindow):
         return pw
 
     def _add_target_band(self, plot: pg.PlotWidget, target: float, color: str):
-        """Target dashed line + two dotted white ±TOLERANCE_DEG boundary lines."""
         target_line = pg.InfiniteLine(
             pos=target, angle=0,
             pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine),
@@ -699,7 +683,6 @@ class Dashboard(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        # ===== LEFT PANEL =====
         left = QVBoxLayout()
         left.setSpacing(8)
 
@@ -771,11 +754,9 @@ class Dashboard(QMainWindow):
         sep.setStyleSheet(f"color: {CARD_BORDER};")
         root.addWidget(sep)
 
-        # ===== RIGHT PANEL =====
         right = QVBoxLayout()
         right.setSpacing(8)
 
-        # --- Metric cards ---
         cards_row = QHBoxLayout()
         cards_row.setSpacing(6)
 
@@ -803,7 +784,6 @@ class Dashboard(QMainWindow):
             antialias=True, background=PLOT_BG_COLOR, foreground=TEXT_MUTED
         )
 
-        # --- Top plots: Pitch | Roll (2x2 layout, top row) ---
         plots_top = QHBoxLayout()
         plots_top.setSpacing(8)
 
@@ -835,7 +815,6 @@ class Dashboard(QMainWindow):
 
         right.addLayout(plots_top, stretch=2)
 
-        # --- Bottom plots: Control signals | Distance ---
         plots_bot = QHBoxLayout()
         plots_bot.setSpacing(8)
 
@@ -861,7 +840,6 @@ class Dashboard(QMainWindow):
 
         right.addLayout(plots_bot, stretch=1)
 
-        # --- Live stats row ---
         stats_row = QHBoxLayout()
         stats_row.setSpacing(8)
         self.stats_pitch = LiveStatsWidget("Pitch", COLORS["pitch"])
@@ -872,8 +850,6 @@ class Dashboard(QMainWindow):
 
         root.addLayout(right, stretch=1)
         self.statusBar().showMessage("READY  ·  Connect a device to begin")
-
-    # ---- Callbacks ----
 
     def _on_connect_click(self):
         dialog = PortSelectDialog(self)
@@ -973,7 +949,6 @@ class Dashboard(QMainWindow):
         self.ble_thread.wait(2000)
         event.accept()
 
-
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -993,7 +968,6 @@ def main():
     window = Dashboard()
     window.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()

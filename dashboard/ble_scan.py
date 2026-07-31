@@ -1,13 +1,5 @@
-"""
-BLE Scanner utility — lists all nearby BLE devices and their services.
-Run this to find the address of your HM-10 / BT4.0 module before using the dashboard.
-
-Usage:
-    python dashboard/ble_scan.py
-"""
 import asyncio
 from bleak import BleakScanner, BleakClient
-
 
 async def main():
     print("\nScanning for BLE devices (5 seconds)...\n")
@@ -48,7 +40,6 @@ async def main():
                     print(f"           {char.description}")
     except Exception as e:
         print(f"Failed to connect: {e}")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

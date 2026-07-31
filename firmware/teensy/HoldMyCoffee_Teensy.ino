@@ -7,644 +7,325 @@
 #include <SD.h>
 #include <SPI.h>
 
-File logFile;
+#include "controller_params.h"
 
-// ----------------- Logging setup -----------------
-void initSD() {
-    if (!SD.begin(BUILTIN_SDCARD)) {
-        Serial.println("SD Card failed!");
-    } else {
-        logFile = SD.open("log.csv", FILE_WRITE);
-        if (logFile) {
-            logFile.println("time_ms,mode,pitch_deg,roll_deg,target_pitch,target_roll,control_pitch,control_roll,motor_pitch_pos,motor_roll_pos");
-            logFile.flush();
-        }
-    }
-}
+static const float DEG_TO_MOTOR_REV = 0.01745329f;
 
-void writeLog(unsigned long t_ms, int mode,
-              float pitch_deg, float roll_deg,
-              float target_pitch, float target_roll,
-              float control_pitch, float control_roll,
-              float motor_pitch_pos, float motor_roll_pos)
-{
-    if (!logFile) return;
-
-    logFile.print(t_ms); logFile.print(",");
-    logFile.print(mode); logFile.print(",");
-    logFile.print(pitch_deg); logFile.print(",");
-    logFile.print(roll_deg); logFile.print(",");
-    logFile.print(target_pitch); logFile.print(",");
-    logFile.print(target_roll); logFile.print(",");
-    logFile.print(control_pitch); logFile.print(",");
-    logFile.print(control_roll); logFile.print(",");
-    logFile.print(motor_pitch_pos); logFile.print(",");
-    logFile.print(motor_roll_pos);
-    logFile.println();
-}
-
-// ----------------- end logging --------------------
-
-float normalizeAngleDifference(float target, float current) {
-    float diff = target - current;
-    return atan2f(sinf(diff * M_PI/180.0f),
-                  cosf(diff * M_PI/180.0f)) * 180.0f/M_PI;
-}
-
-const float MAX_STEP_PER_CYCLE = 0.35f;
-
-// Moteus mode values
-// kStopped = 0, kFault = 1, kPosition = 10, kPositionTimeout = 11
 #define MOTEUS_MODE_FAULT 1
+#define MAX_TORQUE        7.0f
 
-// PID Params
-#define PITCH_KP  0.039635f
-#define PITCH_KI  0.001982f
-#define PITCH_KD  0.001516f
-#define ROLL_KP   0.044402f
-#define ROLL_KI   0.002220f
-#define ROLL_KD   0.000987f
-#define MAX_TORQUE 7.0f
+enum ControlMode { MODE_PID = 1, MODE_RST = 2, MODE_LQG = 3, MODE_MRAC = 4 };
+static volatile int controlMode = MODE_PID;
 
-Moteus moteus_pitch;
-Moteus moteus_roll;
-Moteus moteus_hight;
+static const float TARGET_ROLL_DEG  = -175.44f;
+static const float TARGET_PITCH_DEG = -0.20f;
+
+Moteus moteus_pitch, moteus_roll, moteus_height;
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 
-const float TARGET_PITCH = -0.2f;
-const float TARGET_ROLL  = -175.44f;
-const float TARGET_DISTANCE = 125.0f;
-const float MM_TO_ROT = 0.5f;
-const float MAX_POS = 0.5f;
-const float MIN_POS = -20.0f;
+IntervalTimer controlTimer;
+static volatile bool tick = false;
+static volatile uint32_t missedTicks = 0;
 
-const float ROLL_POS_MAX =  2.0f;
-const float ROLL_POS_MIN = -2.0f;
-
-float distance_from_uno = 0.0f;
-float pitch_integral = 0.0f;
-float roll_integral  = 0.0f;
-unsigned long prev_time = 0;
-float pitch_prev_error = 0.0f;
-float roll_prev_error  = 0.0f;
-
-#define FILTER_SIZE 5
-float distance_buffer[FILTER_SIZE];
-int buffer_index = 0;
-bool buffer_filled = false;
-
-int controlMode = 1;
-
-// BLE serial (HM-10 module on Serial3: RX3=15, TX3=14)
-#define BLE_SERIAL Serial3
-#define BLE_BAUD 9600
-
-// RST parameters
-float R_pitch[2] = {0.0063f, 0.0089f};
-float S_pitch[2] = {0.0719f, -0.1039f};
-float T_pitch = 0.1f;
-float u_pitch_prev[2] = {0.0f, 0.0f};
-float e_pitch_prev[1] = {0.0f};
-
-float R_roll[2] = {0.0048f, 0.0032f};
-float S_roll[2] = {-0.0262f, -0.0600f};
-float T_roll    = 0.1f;
-float u_roll_prev[2] = {0.0f, 0.0f};
-float e_roll_prev[1] = {0.0f};
-
-// LQG parameters
-const float Ad_p[2][2] = {{0.535957f, -17.481335f}, {0.025576f, 0.695961f}};
-const float Bd_p[2] = {0.025576f, 0.000445f};
-const float Cd_p[2] = {-2.596083f, 55.202550f};
-const float K_lqg_p[2] = {0.079650f, 0.001463f};
-const float L_p[2] = {-0.167880f, 0.011632f};
-
-const float Ad_r[2][2] = {{0.057574f, -39.524690f}, {0.019538f, 0.207428f}};
-const float Bd_r[2] = {0.019538f, 0.000392f};
-const float Cd_r[2] = {-1.855063f, 36.240060f};
-const float K_lqg_r[2] = {0.064978f, 0.000494f};
-const float L_r[2] = {-0.191099f, 0.003226f};
-
-float x_hat_p[2] = {0.0f, 0.0f};
-float x_hat_r[2] = {0.0f, 0.0f};
-float u_prev_lqg_p = 0.0f;
-float u_prev_lqg_r = 0.0f;
-
-// Adaptive parameters
-float K_adaptive_pitch = 0.02f;
-float K_adaptive_roll = 0.02f;
-float adaptive_pitch_ref = 0.0f;
-float adaptive_roll_ref = 0.0f;
-#define ADAPTATION_RATE 0.001f
-
-float smoothed_error_mm = 0.0f;
-unsigned long last_ok_time = 0;
-unsigned long last_ble_time = 0;
-#define BLE_INTERVAL_MS 100   // 10 Hz — fits comfortably in 9600 baud
-
-float last_u_pitch = 0.0f;
-float last_u_roll  = 0.0f;
-float last_target_pitch_pos = 0.0f;
-float last_target_roll_pos  = 0.0f;
-float last_motor_pitch_pos = 0.0f;
-float last_motor_roll_pos  = 0.0f;
-float last_motor_height_pos = 0.0f;
-
-#define LOOP_INTERVAL_MS 20
-unsigned long current_time = 0;
-unsigned long last_time = 0;
-
-unsigned long last_poll_time = 0;
-
-float prev_roll_deg = 0.0f;
-bool roll_deg_initialized = false;
-const float MAX_ROLL_JUMP = 10.0f;
-
-void addDistanceSample(float new_sample) {
-    distance_buffer[buffer_index] = new_sample;
-    buffer_index = (buffer_index + 1) % FILTER_SIZE;
-    if (buffer_index == 0) buffer_filled = true;
+void onControlTick() {
+    if (tick) missedTicks++;
+    tick = true;
 }
 
-float getAverageDistance() {
-    int count = buffer_filled ? FILTER_SIZE : buffer_index;
-    if (count == 0) return distance_from_uno;
-    float sum = 0.0f;
-    for (int i = 0; i < count; i++) sum += distance_buffer[i];
-    return sum / count;
+static inline float wrap180(float deg) {
+
+    while (deg > 180.0f)  deg -= 360.0f;
+    while (deg < -180.0f) deg += 360.0f;
+    return deg;
 }
 
-float safeRollTarget(float current_pos, float raw_target) {
-    float step = raw_target - current_pos;
-    if (fabsf(step) > MAX_STEP_PER_CYCLE) {
-        step = copysignf(MAX_STEP_PER_CYCLE, step);
+static inline float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+struct AxisController {
+
+    float u_prev;
+    bool  saturated;
+
+    float kp, ki, kd, tf;
+    float integral, deriv, e_prev, aFilt, kdGain, tt;
+
+    const float *R, *S, *T;
+    int nR, nS, nT;
+    float uHist[4], yHist[4], rHist[4];
+
+    const float *A, *B, *C, *Kx, *L;
+    float Ki_lqg;
+    int   n;
+    float xhat[4], xint;
+
+    const float *theta0, *gamma, *lim, *am, *bm;
+    int   nTheta, nU, nY, nRf;
+    float theta[8], ymHist[4], rmHist[4];
+    float sigma, deadzone, sign;
+};
+
+static AxisController rollC, pitchC;
+
+static void axisReset(AxisController *c) {
+    c->u_prev = 0.0f; c->saturated = false;
+    c->integral = c->deriv = c->e_prev = 0.0f;
+    for (int i = 0; i < 4; i++) {
+        c->uHist[i] = c->yHist[i] = c->rHist[i] = 0.0f;
+        c->xhat[i] = 0.0f; c->ymHist[i] = c->rmHist[i] = 0.0f;
     }
-    float target = current_pos + step;
-    target = constrain(target, ROLL_POS_MIN, ROLL_POS_MAX);
-    return target;
+    c->xint = 0.0f;
+    for (int i = 0; i < c->nTheta; i++) c->theta[i] = c->theta0[i];
 }
 
-void resetRollControllerState() {
-    roll_integral = 0.0f;
-    roll_prev_error = 0.0f;
-    u_roll_prev[0] = 0.0f;
-    u_roll_prev[1] = 0.0f;
-    e_roll_prev[0] = 0.0f;
-    x_hat_r[0] = 0.0f;
-    x_hat_r[1] = 0.0f;
-    u_prev_lqg_r = 0.0f;
-    K_adaptive_roll = 0.02f;
-    last_u_roll = 0.0f;
+static float limitCommand(AxisController *c, float u) {
+    float du = clampf(u - c->u_prev, -CTRL_DU_MAX, CTRL_DU_MAX);
+    float ul = clampf(c->u_prev + du, -CTRL_U_MAX, CTRL_U_MAX);
+    c->saturated = fabsf(ul - u) > 1e-6f;
+    c->u_prev = ul;
+    return ul;
+}
+
+static float stepPID(AxisController *c, float r, float y) {
+    float e = r - y;
+    c->deriv = c->aFilt * c->deriv + c->kdGain * (e - c->e_prev);
+    float uRaw = c->kp * e + c->integral + c->deriv;
+    float u = limitCommand(c, uRaw);
+    c->integral += c->ki * CTRL_TS * e;
+    if (c->tt > 0.0f) c->integral += (CTRL_TS / c->tt) * (u - uRaw);
+    c->e_prev = e;
+    return u;
+}
+
+static float stepRST(AxisController *c, float r, float y) {
+    for (int i = c->nS - 1; i > 0; i--) c->yHist[i] = c->yHist[i - 1];
+    c->yHist[0] = y;
+    for (int i = c->nT - 1; i > 0; i--) c->rHist[i] = c->rHist[i - 1];
+    c->rHist[0] = r;
+
+    float acc = 0.0f;
+    for (int i = 0; i < c->nT; i++) acc += c->T[i] * c->rHist[i];
+    for (int i = 0; i < c->nS; i++) acc -= c->S[i] * c->yHist[i];
+    for (int i = 1; i < c->nR; i++) acc -= c->R[i] * c->uHist[i - 1];
+
+    float u = limitCommand(c, acc);
+    for (int i = c->nR - 2; i > 0; i--) c->uHist[i] = c->uHist[i - 1];
+    if (c->nR > 1) c->uHist[0] = u;
+    return u;
+}
+
+static float stepLQG(AxisController *c, float r, float y) {
+    float uRaw = -c->Ki_lqg * c->xint;
+    for (int i = 0; i < c->n; i++) uRaw -= c->Kx[i] * c->xhat[i];
+    float u = limitCommand(c, uRaw);
+
+    float yhat = 0.0f;
+    for (int i = 0; i < c->n; i++) yhat += c->C[i] * c->xhat[i];
+    float innov = y - yhat;
+
+    float xn[4];
+    for (int i = 0; i < c->n; i++) {
+        float acc = 0.0f;
+        for (int j = 0; j < c->n; j++) acc += c->A[i * c->n + j] * c->xhat[j];
+        xn[i] = acc + c->B[i] * u + c->L[i] * innov;
+    }
+    for (int i = 0; i < c->n; i++) c->xhat[i] = xn[i];
+
+    if (!c->saturated) c->xint += CTRL_TS * (r - y);
+    return u;
+}
+
+static float stepMRAC(AxisController *c, float r, float y) {
+
+    for (int i = c->nRf - 1; i > 0; i--) c->rmHist[i] = c->rmHist[i - 1];
+    c->rmHist[0] = r;
+    float ym = 0.0f;
+    for (int i = 0; i < 2; i++) ym += c->bm[i] * c->rmHist[i];
+    for (int i = 1; i < 3; i++) ym -= c->am[i] * c->ymHist[i - 1];
+    for (int i = 2; i > 0; i--) c->ymHist[i] = c->ymHist[i - 1];
+    c->ymHist[0] = ym;
+
+    for (int i = c->nY - 1; i > 0; i--) c->yHist[i] = c->yHist[i - 1];
+    c->yHist[0] = y;
+    for (int i = c->nRf - 1; i > 0; i--) c->rHist[i] = c->rHist[i - 1];
+    c->rHist[0] = r;
+
+    float phi[8];
+    int k = 0;
+    for (int i = 0; i < c->nU;  i++) phi[k++] = c->uHist[i];
+    for (int i = 0; i < c->nY;  i++) phi[k++] = c->yHist[i];
+    for (int i = 0; i < c->nRf; i++) phi[k++] = c->rHist[i];
+
+    float uRaw = 0.0f;
+    for (int i = 0; i < c->nTheta; i++) uRaw += c->theta[i] * phi[i];
+    float u = limitCommand(c, uRaw);
+
+    float e1 = y - ym;
+    if (fabsf(e1) > c->deadzone && !c->saturated) {
+        float norm = 1.0f;
+        for (int i = 0; i < c->nTheta; i++) norm += phi[i] * phi[i];
+        float g = c->sign * e1 / norm;
+        for (int i = 0; i < c->nTheta; i++) c->theta[i] -= c->gamma[i] * g * phi[i];
+    }
+    for (int i = 0; i < c->nTheta; i++) {
+        c->theta[i] += c->sigma * CTRL_TS * (c->theta0[i] - c->theta[i]);
+        c->theta[i] = clampf(c->theta[i], c->theta0[i] - c->lim[i],
+                                          c->theta0[i] + c->lim[i]);
+    }
+
+    for (int i = c->nU - 1; i > 0; i--) c->uHist[i] = c->uHist[i - 1];
+    if (c->nU > 0) c->uHist[0] = u;
+    return u;
+}
+
+static float stepAxis(AxisController *c, float r, float y) {
+    switch (controlMode) {
+        case MODE_RST:  return stepRST(c, r, y);
+        case MODE_LQG:  return stepLQG(c, r, y);
+        case MODE_MRAC: return stepMRAC(c, r, y);
+        default:        return stepPID(c, r, y);
+    }
+}
+
+static void configureAxes() {
+    rollC.kp = ROLL_PID_KP; rollC.ki = ROLL_PID_KI;
+    rollC.kd = ROLL_PID_KD; rollC.tf = ROLL_PID_TF;
+    rollC.R = ROLL_RST_R; rollC.S = ROLL_RST_S; rollC.T = ROLL_RST_T;
+    rollC.nR = ROLL_RST_NR; rollC.nS = ROLL_RST_NS; rollC.nT = ROLL_RST_NT;
+    rollC.A = ROLL_LQG_A; rollC.B = ROLL_LQG_B; rollC.C = ROLL_LQG_C;
+    rollC.Kx = ROLL_LQG_KX; rollC.L = ROLL_LQG_L;
+    rollC.Ki_lqg = ROLL_LQG_KI; rollC.n = ROLL_LQG_N;
+    rollC.theta0 = ROLL_MRAC_THETA0; rollC.gamma = ROLL_MRAC_GAMMA;
+    rollC.lim = ROLL_MRAC_LIM; rollC.am = ROLL_MRAC_AM; rollC.bm = ROLL_MRAC_BM;
+    rollC.nTheta = ROLL_MRAC_NTHETA; rollC.nU = ROLL_MRAC_NU;
+    rollC.nY = ROLL_MRAC_NY; rollC.nRf = ROLL_MRAC_NRF;
+    rollC.sigma = ROLL_MRAC_SIGMA; rollC.deadzone = ROLL_MRAC_DEADZONE;
+    rollC.sign = ROLL_MRAC_SIGN;
+
+    pitchC.kp = PITCH_PID_KP; pitchC.ki = PITCH_PID_KI;
+    pitchC.kd = PITCH_PID_KD; pitchC.tf = PITCH_PID_TF;
+    pitchC.R = PITCH_RST_R; pitchC.S = PITCH_RST_S; pitchC.T = PITCH_RST_T;
+    pitchC.nR = PITCH_RST_NR; pitchC.nS = PITCH_RST_NS; pitchC.nT = PITCH_RST_NT;
+    pitchC.A = PITCH_LQG_A; pitchC.B = PITCH_LQG_B; pitchC.C = PITCH_LQG_C;
+    pitchC.Kx = PITCH_LQG_KX; pitchC.L = PITCH_LQG_L;
+    pitchC.Ki_lqg = PITCH_LQG_KI; pitchC.n = PITCH_LQG_N;
+    pitchC.theta0 = PITCH_MRAC_THETA0; pitchC.gamma = PITCH_MRAC_GAMMA;
+    pitchC.lim = PITCH_MRAC_LIM; pitchC.am = PITCH_MRAC_AM; pitchC.bm = PITCH_MRAC_BM;
+    pitchC.nTheta = PITCH_MRAC_NTHETA; pitchC.nU = PITCH_MRAC_NU;
+    pitchC.nY = PITCH_MRAC_NY; pitchC.nRf = PITCH_MRAC_NRF;
+    pitchC.sigma = PITCH_MRAC_SIGMA; pitchC.deadzone = PITCH_MRAC_DEADZONE;
+    pitchC.sign = PITCH_MRAC_SIGN;
+
+    for (AxisController *c : {&rollC, &pitchC}) {
+        c->aFilt  = c->tf / (CTRL_TS + c->tf);
+        c->kdGain = c->kd / (CTRL_TS + c->tf);
+        c->tt     = (c->ki != 0.0f) ? fabsf(c->kp / c->ki) : 0.0f;
+        axisReset(c);
+    }
+}
+
+static void readAttitude(float *rollDeg, float *pitchDeg) {
+    imu::Quaternion q = bno.getQuat();
+    const float w = q.w(), x = q.x(), y = q.y(), z = q.z();
+
+    *rollDeg = atan2f(2.0f * (w * x + y * z),
+                      1.0f - 2.0f * (x * x + y * y)) * 57.29577951f;
+
+    const float sp = 2.0f * (w * y - z * x);
+    *pitchDeg = (2.0f * atan2f(sqrtf(fmaxf(0.0f, 1.0f + sp)),
+                               sqrtf(fmaxf(0.0f, 1.0f - sp)))
+                 - 1.57079633f) * 57.29577951f;
+}
+
+File logFile;
+
+static void initSD() {
+    if (!SD.begin(BUILTIN_SDCARD)) { Serial.println("SD init failed"); return; }
+    logFile = SD.open("log.csv", FILE_WRITE);
+    if (logFile) {
+        logFile.println("time_ms,mode,roll_deg,pitch_deg,e_roll,e_pitch,"
+                        "u_roll,u_pitch,motor_roll,motor_pitch,missed");
+        logFile.flush();
+    }
 }
 
 void setup() {
     Serial.begin(115200);
-    unsigned long startWait = millis();
-    while (!Serial && (millis() - startWait < 2000)) {}
+    uint32_t t0 = millis();
+    while (!Serial && millis() - t0 < 2000) {}
 
     Serial1.begin(115200);
-    BLE_SERIAL.begin(BLE_BAUD);
-
     initSD();
 
-    if (!bno.begin()) {
-        Serial.println("BNO055 Failed!");
-        while (1);
-    }
+    if (!bno.begin()) { Serial.println("BNO055 not found"); while (1) {} }
     bno.setExtCrystalUse(true);
 
     ACAN_T4FD_Settings settings(1000000, DataBitRateFactor::x1);
     ACAN_T4::can3.beginFD(settings);
 
-    moteus_pitch.options_.id = 1; moteus_pitch.Initialize(); delay(200);
-    moteus_roll.options_.id = 2;  moteus_roll.Initialize();  delay(200);
-    moteus_hight.options_.id = 3; moteus_hight.Initialize(); delay(200);
+    moteus_pitch.options_.id  = 1; moteus_pitch.Initialize();  delay(200);
+    moteus_roll.options_.id   = 2; moteus_roll.Initialize();   delay(200);
+    moteus_height.options_.id = 3; moteus_height.Initialize(); delay(200);
+
+    configureAxes();
+    controlTimer.begin(onControlTick, CTRL_PERIOD_US);
 }
 
 void loop() {
-    unsigned long now = micros();
 
-    if (now - last_poll_time >= 5000) {
-        if (moteus_pitch.SetQuery()) moteus_pitch.Poll();
-        if (moteus_roll.SetQuery())  moteus_roll.Poll();
-        if (moteus_hight.SetQuery()) moteus_hight.Poll();
-        last_poll_time = now;
-    }
+    if (moteus_pitch.SetQuery())  moteus_pitch.Poll();
+    if (moteus_roll.SetQuery())   moteus_roll.Poll();
+    if (moteus_height.SetQuery()) moteus_height.Poll();
 
-    if (millis() - last_time >= LOOP_INTERVAL_MS) {
-        last_time = millis();
-
-        if (Serial.available()) {
-            char c = Serial.read();
-            if (c == '1') { controlMode = 1; Serial.println("Control Mode: PID"); }
-            else if (c == '2') { controlMode = 2; Serial.println("Control Mode: RST"); }
-            else if (c == '3') { controlMode = 3; Serial.println("Control Mode: LQG"); }
-            else if (c == '4') { controlMode = 4; Serial.println("Control Mode: Adaptive"); }
-        }
-
-        // BLE: receive controller mode commands
-        if (BLE_SERIAL.available()) {
-            char c = BLE_SERIAL.read();
-            if (c == '1') { controlMode = 1; BLE_SERIAL.println("MODE:PID"); }
-            else if (c == '2') { controlMode = 2; BLE_SERIAL.println("MODE:RST"); }
-            else if (c == '3') { controlMode = 3; BLE_SERIAL.println("MODE:LQG"); }
-            else if (c == '4') { controlMode = 4; BLE_SERIAL.println("MODE:Adaptive"); }
-        }
-
-        if (Serial1.available()) {
-            String msg = Serial1.readStringUntil('\n');
-            msg.trim();
-            if (msg.startsWith("DIST:")) {
-                float val = msg.substring(5).toFloat();
-                if (val > 0.0f && val < 10000.0f) {
-                    distance_from_uno = val;
-                    addDistanceSample(val);
-                }
-            }
-        }
-
-        imu::Quaternion quat = bno.getQuat();
-        float w = quat.w(), x = quat.x(), y = quat.y(), z = quat.z();
-        float sinr_cosp = 2.0f * (w * x + y * z);
-        float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
-        float roll_rad = atan2(sinr_cosp, cosr_cosp);
-        float sinp = 2.0f * (w * y - z * x);
-        float pitch_rad = (abs(sinp) >= 1) ? copysign(M_PI / 2, sinp) : asin(sinp);
-        float roll_deg  = roll_rad  * 180.0f / M_PI;
-        float pitch_deg = pitch_rad * 180.0f / M_PI;
-
-        if (roll_deg_initialized) {
-            float jump = normalizeAngleDifference(roll_deg, prev_roll_deg);
-            if (fabsf(jump) > MAX_ROLL_JUMP) {
-                roll_deg = prev_roll_deg;  
-            }
-        }
-        prev_roll_deg = roll_deg;
-        roll_deg_initialized = true;
-
-        {
-            int roll_mode = static_cast<int>(moteus_roll.last_result().values.mode);
-            if (roll_mode == MOTEUS_MODE_FAULT) {
-                Serial.println("!!! Roll motor FAULT — resetting...");
-                moteus_roll.SetStop();
-                delay(50);
-                resetRollControllerState();
-                return; 
-            }
-        }
-
-        // Loop timing measurement
-        static unsigned long loop_start = 0;
-        static unsigned long loop_count = 0;
-        static float avg_period_ms = 0;
-        unsigned long now_loop = micros();
-        if (loop_start > 0) {
-            float period_ms = (now_loop - loop_start) / 1000.0f;
-            avg_period_ms = avg_period_ms * 0.99f + period_ms * 0.01f;
-            loop_count++;
-            if (loop_count % 100 == 0) {
-                //Serial.print("Avg loop period: ");
-                //Serial.print(avg_period_ms);
-                //Serial.print(" ms, Freq: ");
-                //Serial.print(1000.0f / avg_period_ms);
-                //Serial.println(" Hz");
-            }
-        }
-        loop_start = now_loop;
-
-        float avg_distance = getAverageDistance();
-        now = micros();
-        float dt = (prev_time > 0) ? (now - prev_time) / 1e6f : 0.002f;
-        prev_time = now;
-        if (dt > 0.1f) dt = 0.002f;
-
-        if (controlMode == 1) runPID(pitch_deg, roll_deg, dt);
-        else if (controlMode == 2) runRST(pitch_deg, roll_deg, dt);
-        else if (controlMode == 3) runLQG(pitch_deg, roll_deg, dt);
-        else if (controlMode == 4) runAdaptive(pitch_deg, roll_deg, dt);
-
-        // HEIGHT control
-        if (moteus_hight.SetQuery() && !isnan(moteus_hight.last_result().values.position)) {
-            last_ok_time = millis();
-            float raw_error_mm = TARGET_DISTANCE - avg_distance;
-            const float alpha = 0.5f;
-            smoothed_error_mm = smoothed_error_mm * (1.0f - alpha) + raw_error_mm * alpha;
-
-            float target_pos;
-            if (fabs(smoothed_error_mm) > 5.0f)
-                target_pos = constrain(smoothed_error_mm * MM_TO_ROT, MIN_POS, MAX_POS);
-            else
-                target_pos = moteus_hight.last_result().values.position;
-
-            // Serial.println(target_pos);  // disabled: pollutes telemetry stream
-
-            last_motor_height_pos = moteus_hight.last_result().values.position;
-
-            Moteus::PositionMode::Command h_cmd;
-            h_cmd.position = target_pos;
-            h_cmd.maximum_torque = MAX_TORQUE;
-            moteus_hight.BeginPosition(h_cmd);
-        }
-        
-
-
-        if (!isnan(moteus_pitch.last_result().values.position))
-            last_motor_pitch_pos = moteus_pitch.last_result().values.position;
-        if (!isnan(moteus_roll.last_result().values.position))
-            last_motor_roll_pos = moteus_roll.last_result().values.position;
-
-        writeLog(
-            millis(),
-            controlMode,
-            pitch_deg,
-            roll_deg,
-            (last_target_pitch_pos * 180.0f / M_PI),
-            (last_target_roll_pos  * 180.0f / M_PI),
-            last_u_pitch,
-            last_u_roll,
-            last_motor_pitch_pos,
-            last_motor_roll_pos
-        );
-        if (millis() % 100 == 0) logFile.flush();
-
-        // BLE telemetry output — rate-limited to BLE_INTERVAL_MS to stay within 9600 baud budget
-        if (millis() - last_ble_time >= BLE_INTERVAL_MS) {
-            last_ble_time = millis();
-            char buf[96];
-            snprintf(buf, sizeof(buf),
-                "T,%lu,%d,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.0f\n",
-                millis(),
-                controlMode,
-                pitch_deg,
-                roll_deg,
-                last_u_pitch,
-                last_u_roll,
-                (last_target_pitch_pos * 180.0f / (float)M_PI),
-                (last_target_roll_pos  * 180.0f / (float)M_PI),
-                last_motor_pitch_pos,
-                last_motor_roll_pos,
-                last_motor_height_pos,
-                avg_distance);
-            BLE_SERIAL.print(buf);
-            Serial.print(buf);  // USB telemetry — readable by dashboard over COM port
+    if (Serial.available()) {
+        char ch = Serial.read();
+        if (ch >= '1' && ch <= '4') {
+            controlMode = ch - '0';
+            axisReset(&rollC);
+            axisReset(&pitchC);
         }
     }
 
-    delay(1);
-}
+    if (!tick) return;
+    tick = false;
 
-// ==================== CONTROLLERS ====================
+    float rollDeg, pitchDeg;
+    readAttitude(&rollDeg, &pitchDeg);
 
-// ---- PID ----
-void runPID(float pitch_deg, float roll_deg, float dt) {
-    float pitch_error = TARGET_PITCH - pitch_deg;
-    pitch_integral += pitch_error * dt;
-    pitch_integral = constrain(pitch_integral, -50.0f, 50.0f);
-    float pitch_derivative = (pitch_error - pitch_prev_error) / dt;
-    pitch_prev_error = pitch_error;
-    float pitch_correction_deg =
-        (PITCH_KP * pitch_error) +
-        (PITCH_KI * pitch_integral) +
-        (PITCH_KD * pitch_derivative);
+    float eRoll  = wrap180(TARGET_ROLL_DEG  - rollDeg);
+    float ePitch = wrap180(TARGET_PITCH_DEG - pitchDeg);
 
-    if (!isnan(moteus_pitch.last_result().values.position)) {
-        last_ok_time = millis();
-        float current_pitch_pos = moteus_pitch.last_result().values.position;
-        float pitch_correction_rad = pitch_correction_deg * M_PI / 180.0f;
-        float target_pitch_pos = current_pitch_pos - pitch_correction_rad;
+    float uRoll  = stepAxis(&rollC,  0.0f, -eRoll);
+    float uPitch = stepAxis(&pitchC, 0.0f, -ePitch);
 
-        last_u_pitch = pitch_correction_deg;
-        last_target_pitch_pos = target_pitch_pos;
+    if (static_cast<int>(moteus_roll.last_result().values.mode) == MOTEUS_MODE_FAULT) {
+        moteus_roll.SetStop();
+        axisReset(&rollC);
+        return;
+    }
 
+    float mRoll = moteus_roll.last_result().values.position;
+    if (!isnan(mRoll)) {
         Moteus::PositionMode::Command cmd;
-        cmd.position = target_pitch_pos;
+        cmd.position = mRoll - uRoll * DEG_TO_MOTOR_REV;
+        cmd.maximum_torque = MAX_TORQUE;
+        moteus_roll.BeginPosition(cmd);
+    }
+
+    float mPitch = moteus_pitch.last_result().values.position;
+    if (!isnan(mPitch)) {
+        Moteus::PositionMode::Command cmd;
+        cmd.position = mPitch - uPitch * DEG_TO_MOTOR_REV;
         cmd.maximum_torque = MAX_TORQUE;
         moteus_pitch.BeginPosition(cmd);
     }
 
-    float roll_error = normalizeAngleDifference(TARGET_ROLL, roll_deg);
-    roll_integral += roll_error * dt;
-    roll_integral = constrain(roll_integral, -50.0f, 50.0f);
-    float diff = normalizeAngleDifference(roll_error, roll_prev_error);
-    float roll_derivative = diff / dt;
-    roll_prev_error = roll_error;
-    float roll_correction_deg =
-        (ROLL_KP * roll_error) +
-        (ROLL_KI * roll_integral) +
-        (ROLL_KD * roll_derivative);
-
-    if (!isnan(moteus_roll.last_result().values.position)) {
-        last_ok_time = millis();
-        float current_roll_pos = moteus_roll.last_result().values.position;
-        float roll_correction_rad = roll_correction_deg * M_PI / 180.0f;
-        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
-        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
-
-        last_u_roll = roll_correction_deg;
-        last_target_roll_pos = target_roll_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_roll_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_roll.BeginPosition(cmd);
-    }
-}
-
-// ---- RST ----
-void runRST(float pitch_deg, float roll_deg, float dt) {
-    float e_pitch = TARGET_PITCH - pitch_deg;
-
-    float u_pitch =
-    - R_pitch[0] * u_pitch_prev[0]
-    - R_pitch[1] * u_pitch_prev[1]
-    + S_pitch[0] * e_pitch
-    + S_pitch[1] * e_pitch_prev[0]
-    + T_pitch * e_pitch;
-
-    u_pitch_prev[1] = u_pitch_prev[0];
-    u_pitch_prev[0] = u_pitch;
-
-    e_pitch_prev[0] = e_pitch;
-
-    if (!isnan(moteus_pitch.last_result().values.position)) {
-        last_ok_time = millis();
-        float current_pitch_pos = moteus_pitch.last_result().values.position;
-        float pitch_correction_rad = u_pitch * M_PI / 180.0f;
-        float target_pitch_pos = current_pitch_pos - pitch_correction_rad;
-
-        last_u_pitch = u_pitch;
-        last_target_pitch_pos = target_pitch_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_pitch_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_pitch.BeginPosition(cmd);
-    }
-
-    float e_roll = normalizeAngleDifference(TARGET_ROLL, roll_deg);
-
-    float u_roll =
-    - R_roll[0] * u_roll_prev[0]
-    - R_roll[1] * u_roll_prev[1]
-    + S_roll[0] * e_roll
-    + S_roll[1] * e_roll_prev[0]
-    + T_roll * e_roll;
-
-    u_roll_prev[1] = u_roll_prev[0];
-    u_roll_prev[0] = u_roll;
-
-    e_roll_prev[0] = e_roll;
-
-    if (!isnan(moteus_roll.last_result().values.position)) {
-        last_ok_time = millis();
-        float current_roll_pos = moteus_roll.last_result().values.position;
-        float roll_correction_rad = u_roll * M_PI / 180.0f;
-        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
-        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
-
-        last_u_roll = u_roll;
-        last_target_roll_pos = target_roll_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_roll_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_roll.BeginPosition(cmd);
-    }
-}
-
-// ---- LQG ----
-void runLQG(float pitch_deg, float roll_deg, float dt) {
-    float x_pred_p[2];
-    x_pred_p[0] = Ad_p[0][0]*x_hat_p[0] + Ad_p[0][1]*x_hat_p[1] + Bd_p[0]*u_prev_lqg_p;
-    x_pred_p[1] = Ad_p[1][0]*x_hat_p[0] + Ad_p[1][1]*x_hat_p[1] + Bd_p[1]*u_prev_lqg_p;
-
-    float y_pred_p = Cd_p[0]*x_pred_p[0] + Cd_p[1]*x_pred_p[1];
-    float innov_p = pitch_deg - y_pred_p;
-
-    x_hat_p[0] = x_pred_p[0] + L_p[0]*innov_p;
-    x_hat_p[1] = x_pred_p[1] + L_p[1]*innov_p;
-
-    float e_p = TARGET_PITCH - pitch_deg;
-    float u_pitch = K_lqg_p[0]*e_p - K_lqg_p[1]*x_hat_p[1];
-
-    u_prev_lqg_p = u_pitch;
-
-    if (!isnan(moteus_pitch.last_result().values.position)) {
-        last_ok_time = millis();
-        float current_pitch_pos = moteus_pitch.last_result().values.position;
-        float pitch_correction_rad = u_pitch * M_PI / 180.0f;
-        float target_pitch_pos = current_pitch_pos - pitch_correction_rad;
-
-        last_u_pitch = u_pitch;
-        last_target_pitch_pos = target_pitch_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_pitch_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_pitch.BeginPosition(cmd);
-    }
-
-    float x_pred_r[2];
-    x_pred_r[0] = Ad_r[0][0]*x_hat_r[0] + Ad_r[0][1]*x_hat_r[1] + Bd_r[0]*u_prev_lqg_r;
-    x_pred_r[1] = Ad_r[1][0]*x_hat_r[0] + Ad_r[1][1]*x_hat_r[1] + Bd_r[1]*u_prev_lqg_r;
-
-    float y_pred_r = Cd_r[0]*x_pred_r[0] + Cd_r[1]*x_pred_r[1];
-
-    float innov_r = roll_deg - y_pred_r;
-
-    x_hat_r[0] = x_pred_r[0] + L_r[0]*innov_r;
-    x_hat_r[1] = x_pred_r[1] + L_r[1]*innov_r;
-
-    float e_r = normalizeAngleDifference(TARGET_ROLL, roll_deg);
-    float u_roll = K_lqg_r[0]*e_r - K_lqg_r[1]*x_hat_r[1];
-
-    u_prev_lqg_r = u_roll;
-
-    if (!isnan(moteus_roll.last_result().values.position)) {
-        last_ok_time = millis();
-        float current_roll_pos = moteus_roll.last_result().values.position;
-        float roll_correction_rad = u_roll * M_PI / 180.0f;
-        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
-        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
-
-        last_u_roll = u_roll;
-        last_target_roll_pos = target_roll_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_roll_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_roll.BeginPosition(cmd);
-    }
-}
-
-// ---- Adaptive ----
-void runAdaptive(float pitch_deg, float roll_deg, float dt) {
-    const float tau = 0.5f;
-    const float lambda = 0.5f;       
-    const float K_nominal = 0.02f;
-
-    // ==================== PITCH ====================
-    float e_pitch = TARGET_PITCH - pitch_deg;
-
-    adaptive_pitch_ref += dt/tau * (TARGET_PITCH - adaptive_pitch_ref);
-    float e_track_pitch = adaptive_pitch_ref - pitch_deg;
-
-    float e_pitch_n = e_pitch / 180.0f;
-    float e_track_pitch_n = e_track_pitch / 180.0f;
-
-    if (fabs(e_pitch) < 60.0f) {
-        K_adaptive_pitch += ADAPTATION_RATE * e_track_pitch_n * e_pitch_n * dt
-                            - lambda * (K_adaptive_pitch - K_nominal) * dt;
-    }
-
-    K_adaptive_pitch = constrain(K_adaptive_pitch, 0.01f, 0.1f);
-    float u_pitch = K_adaptive_pitch * e_track_pitch;
-    u_pitch = constrain(u_pitch, -5.0f, 5.0f);
-
-    if (!isnan(moteus_pitch.last_result().values.position)) {
-        float current_pitch_pos = moteus_pitch.last_result().values.position;
-        float pitch_correction_rad = u_pitch * M_PI / 180.0f;
-        float target_pitch_pos = current_pitch_pos - pitch_correction_rad;
-
-        last_u_pitch = u_pitch;
-        last_target_pitch_pos = target_pitch_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_pitch_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_pitch.BeginPosition(cmd);
-    }
-
-    // ==================== ROLL ====================
-    float e_roll = normalizeAngleDifference(TARGET_ROLL, roll_deg);
-
-    adaptive_roll_ref += dt/tau * (TARGET_ROLL - adaptive_roll_ref);
-    float e_track_roll = normalizeAngleDifference(adaptive_roll_ref, roll_deg);
-
-    float e_roll_n = e_roll / 180.0f;
-    float e_track_roll_n = e_track_roll / 180.0f;
-
-    if (fabs(e_roll) < 60.0f) {
-        K_adaptive_roll += ADAPTATION_RATE * e_track_roll_n * e_roll_n * dt
-                           - lambda * (K_adaptive_roll - K_nominal) * dt;
-    }
-
-    K_adaptive_roll = constrain(K_adaptive_roll, 0.01f, 0.1f);
-    float u_roll = K_adaptive_roll * e_track_roll;
-    u_roll = constrain(u_roll, -5.0f, 5.0f);
-
-    if (!isnan(moteus_roll.last_result().values.position)) {
-        float current_roll_pos = moteus_roll.last_result().values.position;
-        float roll_correction_rad = u_roll * M_PI / 180.0f;
-        float raw_target_roll_pos = current_roll_pos - roll_correction_rad;
-        float target_roll_pos = safeRollTarget(current_roll_pos, raw_target_roll_pos);
-
-        last_u_roll = u_roll;
-        last_target_roll_pos = target_roll_pos;
-
-        Moteus::PositionMode::Command cmd;
-        cmd.position = target_roll_pos;
-        cmd.maximum_torque = MAX_TORQUE;
-        moteus_roll.BeginPosition(cmd);
+    if (logFile) {
+        logFile.printf("%lu,%d,%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%lu\n",
+                       millis(), controlMode, rollDeg, pitchDeg, eRoll, ePitch,
+                       uRoll, uPitch, mRoll, mPitch, missedTicks);
+        static uint32_t lastFlush = 0;
+        if (millis() - lastFlush > 500) { logFile.flush(); lastFlush = millis(); }
     }
 }

@@ -5,7 +5,7 @@
 #include <utility/imumaths.h>
 #include <math.h>
 
-Servo servo1; 
+Servo servo1;
 Servo servo2;
 
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);

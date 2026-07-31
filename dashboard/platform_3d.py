@@ -1,8 +1,3 @@
-"""
-HoldMyCoffee Dashboard - 3D Platform Visualization Widget
-Uses PyOpenGL + PyQt6 to render a tilting platform in real-time.
-"""
-
 import math
 import numpy as np
 from PyQt6.QtWidgets import QWidget
@@ -18,9 +13,7 @@ except ImportError:
     HAS_OPENGL = False
     QOpenGLWidget = QWidget
 
-
 class PlatformView3D(QOpenGLWidget):
-    """3D visualization of the stabilization platform."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,44 +61,36 @@ class PlatformView3D(QOpenGLWidget):
         glLoadIdentity()
         gluLookAt(4.0, 5.0, 4.0, 0, 0.5, 0, 0, 1, 0)
 
-        # Grid floor
         self._draw_grid()
 
-        # Base cylinder
         glPushMatrix()
         glColor3f(0.3, 0.3, 0.35)
         self._draw_cylinder(0.3, 0.0, 0.6, 20)
         glPopMatrix()
 
-        # Support column
-        h_offset = self.height * 0.01  # scale height for visual
+        h_offset = self.height * 0.01
         glPushMatrix()
         glColor3f(0.45, 0.45, 0.5)
         self._draw_cylinder(0.12, 0.6, 0.6 + 1.0 + h_offset, 12)
         glPopMatrix()
 
-        # Platform (tilted)
         glPushMatrix()
         glTranslatef(0, 1.6 + h_offset, 0)
         glRotatef(self.pitch, 1, 0, 0)
         glRotatef(self.roll, 0, 0, 1)
 
-        # Platform disc
         glColor3f(0.18, 0.55, 0.85)
         self._draw_disc(1.2, 0.08, 32)
 
-        # Cup (cylinder on platform)
         glPushMatrix()
         glColor3f(0.9, 0.85, 0.7)
         self._draw_cylinder(0.2, 0.08, 0.55, 16)
-        # Coffee surface
         glColor3f(0.35, 0.2, 0.1)
         self._draw_circle(0.18, 0.5, 16)
         glPopMatrix()
 
         glPopMatrix()
 
-        # Target ghost platform (semi-transparent)
         glPushMatrix()
         glTranslatef(0, 1.6, 0)
         glRotatef(self.target_pitch, 1, 0, 0)
@@ -147,7 +132,6 @@ class PlatformView3D(QOpenGLWidget):
             glEnd()
 
     def _draw_disc(self, radius, thickness, slices):
-        # Top face
         glNormal3f(0, 1, 0)
         glBegin(GL_TRIANGLE_FAN)
         glVertex3f(0, thickness, 0)
@@ -155,7 +139,6 @@ class PlatformView3D(QOpenGLWidget):
             a = 2 * math.pi * i / slices
             glVertex3f(radius * math.cos(a), thickness, radius * math.sin(a))
         glEnd()
-        # Bottom face
         glNormal3f(0, -1, 0)
         glBegin(GL_TRIANGLE_FAN)
         glVertex3f(0, 0, 0)
@@ -163,7 +146,6 @@ class PlatformView3D(QOpenGLWidget):
             a = 2 * math.pi * i / slices
             glVertex3f(radius * math.cos(a), 0, radius * math.sin(a))
         glEnd()
-        # Side
         self._draw_cylinder(radius, 0, thickness, slices)
 
     def _draw_circle(self, radius, y, slices):
@@ -175,9 +157,7 @@ class PlatformView3D(QOpenGLWidget):
             glVertex3f(radius * math.cos(a), y, radius * math.sin(a))
         glEnd()
 
-
 class PlatformView3DFallback(QWidget):
-    """Fallback 2D view if OpenGL is not available."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -204,27 +184,22 @@ class PlatformView3DFallback(QWidget):
         cx, cy = self.width() // 2, self.height() // 2
         r = min(cx, cy) - 30
 
-        # Platform circle
         p.setPen(QPen(QColor(70, 160, 230), 3))
         p.setBrush(QBrush(QColor(46, 140, 215, 100)))
         p.drawEllipse(cx - r, cy - r, 2 * r, 2 * r)
 
-        # Tilt indicator
         dx = r * 0.8 * math.sin(math.radians(self.roll))
         dy = r * 0.8 * math.sin(math.radians(self.pitch))
         p.setPen(QPen(QColor(255, 100, 80), 4))
         p.drawLine(int(cx - dx), int(cy - dy), int(cx + dx), int(cy + dy))
 
-        # Labels
         p.setPen(QColor(200, 200, 200))
         p.setFont(QFont("Segoe UI", 10))
         p.drawText(10, 20, f"Pitch: {self.pitch:.1f}°")
         p.drawText(10, 40, f"Roll: {self.roll:.1f}°")
         p.end()
 
-
 def create_platform_view(parent=None):
-    """Factory: return OpenGL view if available, else fallback."""
     if HAS_OPENGL:
         return PlatformView3D(parent)
     return PlatformView3DFallback(parent)

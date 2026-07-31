@@ -1,26 +1,51 @@
 # Hold My Coffee - Beverage Stabilization Platform
 
-**Authors:** Valentin Pletea-Marinescu, Sebastian-Alexandru Matei, Teodor-Alexandru Dicu, Severus-Constantin Olteanu  
+**Authors:** Valentin Pletea-Marinescu, Sebastian-Alexandru Matei, Teodor-Alexandru Dicu, Severus-Constantin Olteanu
 National University of Science and Technology POLITEHNICA Bucharest, Romania
 
 ---
 
 ## Overview
 
-Hold My Coffee is a **3-DOF active stabilization platform** designed to maintain a flat, near-horizontal surface while supporting a cup or mug, even in the presence of disturbances or on a moving base. The system controls pitch, roll, and vertical translation.
+Hold My Coffee is a **3-DOF active stabilization platform** that keeps a
+near-horizontal surface under a cup while the base is disturbed. It controls
+pitch, roll and vertical translation.
 
-This repository contains the embedded firmware, MATLAB analysis scripts, and experimental datasets for a comparative study of four control strategies: **PID, RST, LQG, and MRAC**.
+This repository contains the embedded firmware, the Python design and
+analysis toolchain, and the experimental datasets behind a comparative study
+of **PID, RST, LQG, LQR and MRAC**. The point of the study is that all five
+are held to the **same robustness constraint** — an identical peak
+sensitivity `Ms` — with closed-loop bandwidth left as the free variable. A
+comparison that instead fixes the performance specification lets a structure
+buy performance by quietly accepting a thinner stability margin, which is
+exactly what made PID look competitive in the earlier version of this work.
+
+## What is measured and what is simulated
+
+- **Measured on the hardware:** the PRBS identification experiments in
+  `identification/roll_id.csv` and `identification/pitch_id.csv`, from which the axis
+  models are estimated.
+- **Simulated:** the controller comparison, run on those identified models
+  with the measured transport delay, the measured IMU noise and quantisation,
+  and the actuator limits.
+
+The paper states this distinction explicitly. The models are experimental;
+the controller comparison is not.
 
 ---
 
-## Features
+## Reproducing everything
 
-- 3 Degrees of Freedom: Pitch, Roll, Vertical height
-- Dual-microcontroller real-time architecture (Teensy 4.1 + Arduino UNO)
-- Moteus r4.11 motor controllers with Field-Oriented Control (FOC)
-- BNO055 9-DOF IMU (quaternion output at 100 Hz) + VL53L0X ToF sensor
-- Cascaded control loops running at 20 Hz (outer) / kHz (inner)
-- Modular 3D-printed ABS/PETG + aluminum extrusion structure
+```bash
+pip install -r requirements.txt
+python -m tools.run_all          # identification -> design -> simulation -> tables + figures
+python -m tools.export_firmware  # regenerate firmware/teensy/controller_params.h
+cd paper && latexmk -pdf main.tex
+```
+
+`run_all` writes per-run CSVs and `metrics.csv` into `results/`, the LaTeX
+tables into `results/tables/`, and the figures into `paper/figures/`. Every
+number in the paper comes from those files; none is transcribed by hand.
 
 ---
 
@@ -32,57 +57,82 @@ This repository contains the embedded firmware, MATLAB analysis scripts, and exp
 | **MCU #2** | Arduino UNO - ATmega328P (height control, ToF sensor) |
 | **Motors** | mj5208 brushless motors (x3) |
 | **Controllers** | Moteus r4.11 (x3) - FDCAN @ 1 Mbps |
-| **IMU** | Adafruit BNO055 - NDOF mode, drift-free quaternions |
+| **IMU** | Adafruit BNO055 - NDOF mode, quaternion output |
 | **Distance** | VL53L0X Time-of-Flight sensor |
 | **Linear Motion** | MGN12H linear rails + T8 lead screw (2 mm pitch) |
 | **Power** | HRB 4S LiPo 6000 mAh, 14.8 V, 50C + 300 A switch |
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```
+tools/                 design and analysis in Python (replaces the former MATLAB scripts)
+  config.py              all rates, limits and the common specification, defined once
+  identification.py      output-error identification with order selection
+  plant.py               axis models, payload scaling, liquid slosh mode
+  design.py              the four syntheses, loop analysis, robustness frontier
+  controllers.py         discrete control laws, written as the firmware runs them
+  simulation.py          closed-loop simulation and the disturbance protocol
+  metrics.py             metrics, composite score, weight-sensitivity analysis
+  report.py / figures.py LaTeX tables and figures
+  run_all.py             the whole pipeline
+  export_firmware.py     generates firmware/teensy/controller_params.h
+
 firmware/
-  arduino_uno/    - Height control firmware
-  teensy/         - Main stabilization firmware (PID, RST, LQG, MRAC)
+  teensy/                outer attitude loop, fixed-rate scheduler
+  arduino_uno/           height axis and the servo disturbance rig
 
-scripts/
-  pitch_tf.m, roll_tf.m           - System identification
-  pitch_pid.m, roll_pid.m         - PID controller design (SIMC tuning)
-  pitch_rst.m, roll_rst.m         - RST controller design (pole-placement)
-  pitch_lqg.m, roll_lqg.m         - LQG controller design (LQR + Kalman)
-  pitch_adaptive.m, roll_adaptive.m - MRAC controller design
-  analyze_controller.m            - Single controller analysis
-  compare_controllers.m           - Multi-controller comparison plots
-  compute_cpa_score.m             - Composite Performance Assessment
-
-datasets/
-  pitch_id.csv, roll_id.csv       - System identification data
-  log_pid.csv, log_rst.csv, ...   - Experimental logs per controller
+dashboard/               live telemetry UI (BLE / USB serial)
+identification/          the two PRBS records the models are estimated from
+paper/                   manuscript, generated figures, bibliography
+results/                 generated: run CSVs, metrics, LaTeX tables
 ```
 
 ---
 
-## Control Strategies
+## Control strategies
 
-| Controller | Description |
-|------------|-------------|
-| **PID** | SIMC-tuned, simple and robust baseline |
-| **RST** | Discrete pole-placement with 2-DOF structure |
-| **LQG** | LQR state-feedback + Kalman observer |
-| **MRAC** | Model Reference Adaptive Control with MIT rule |
+All five are synthesised on the same identified model, at 32 Hz, with
+integral action, identical actuator limits and an identical peak sensitivity
+of 1.30. Bandwidth is the free variable and is what the comparison measures.
+
+| Controller | Design |
+|------------|--------|
+| **PID** | Parallel form, filtered derivative, back-calculation anti-windup; gains fitted to the common reference model |
+| **RST** | Exact pole placement via the Bezout identity, integrator forced in `R` |
+| **LQG** | LQR with an integral state and a Kalman filter fixed by the measured noise statistics; weights swept for maximum bandwidth within the `Ms` budget |
+| **LQR** | The same optimal feedback law with no estimator: because the identified model has no numerator dynamics, the state `[y(k), y(k-1), u(k-1)]` is directly available |
+| **MRAC** | Direct MRAC, normalised gradient with sigma-modification, dead zone and projection; initialised at the exact model-matching (RST) solution |
 
 ---
 
-## Composite Performance Assessment (CPA)
+## Composite score
 
-A weighted metric combining:
-- **IAE** (Integral Absolute Error) - weight 0.45
-- **Overshoot** (peak deviation) - weight 0.25
-- **RMSE** (Root Mean Square Error) - weight 0.20
-- **Control Effort** (sum of |delta u|) - weight 0.10
+The earlier version of this study normalised each metric by a hand-chosen
+constant (IAE_max = 1000, overshoot_max = 30 deg). Those constants were one
+to two orders of magnitude above the values actually observed, so the index
+was dominated by whichever metric happened to be nearest its cap.
 
-Lower CPA score = better performance.
+The score used now normalises **within each test case against the best
+controller of that case**, so it is dimensionless and scale-free: 1.00 means
+best in that case, 2.00 means twice its cost. Weights are 0.40 IAE, 0.25
+RMSE, 0.20 peak error, 0.15 control effort, and `metrics.weight_sensitivity`
+reports how often each controller wins under randomly redrawn weights.
+
+---
+
+## Design notes
+
+- Sampling is **32 Hz** (31.25 ms), released by a hardware timer. The
+  identified **two-sample transport delay (62.5 ms)** is the binding
+  constraint on achievable bandwidth.
+- Controller gains are **generated** into `controller_params.h` from the
+  design scripts, not maintained by hand: an earlier revision shipped RST
+  coefficients that did not correspond to any design.
+- The identified numerator zero is not statistically identifiable (it moves
+  from -0.30 to -2.32 across sub-records), so both axes are modelled as
+  minimum-phase second-order resonances with delay.
 
 ---
 

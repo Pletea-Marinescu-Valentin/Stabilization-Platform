@@ -5,3 +5,15 @@
 __pycache__/
 *.log
 *.tmp
+results/
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.out
+*.nav
+*.snm
+*.toc
+.venv/

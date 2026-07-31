@@ -1,9 +1,3 @@
-"""
-HoldMyCoffee Dashboard - USB Serial Connection Module
-Replaces BLE with direct Teensy USB serial (pyserial).
-Same Qt signal interface as the BLE worker so the dashboard needs minimal changes.
-"""
-
 import logging
 import threading
 
@@ -15,17 +9,13 @@ from PyQt6.QtWidgets import (
     QListWidget, QComboBox, QDialogButtonBox,
 )
 
-from ble_connection import TelemetryData, CONTROLLER_NAMES  # reuse data classes
+from ble_connection import TelemetryData, CONTROLLER_NAMES
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BAUD = 115200
 
-
-# --------------- Serial Connection (low-level) ---------------
-
 class SerialConnection:
-    """Reads Teensy telemetry over USB serial in a background thread."""
 
     def __init__(self):
         self._serial: serial.Serial | None = None
@@ -93,14 +83,10 @@ class SerialConnection:
                     self._on_connection_changed(False)
                 break
 
-
-# --------------- Qt Worker (runs in QThread) ---------------
-
 class SerialWorker(QObject):
-    """Same signal interface as BLEWorker — drop-in replacement in Dashboard."""
     telemetry_received = pyqtSignal(object)
     connection_changed = pyqtSignal(bool)
-    scan_finished = pyqtSignal(list)   # list of serial.tools.list_ports.ListPortInfo
+    scan_finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
     def __init__(self):
@@ -109,7 +95,6 @@ class SerialWorker(QObject):
 
     @pyqtSlot()
     def init_loop(self):
-        """Called when the QThread starts."""
         self.conn.set_callbacks(
             on_telemetry=lambda td: self.telemetry_received.emit(td),
             on_connection_changed=lambda c: self.connection_changed.emit(c),
@@ -122,7 +107,6 @@ class SerialWorker(QObject):
 
     @pyqtSlot(object)
     def connect_device(self, port_info):
-        """port_info is a (port_name, baud) tuple."""
         try:
             port, baud = port_info
             self.conn.connect(port, baud)
@@ -143,13 +127,9 @@ class SerialWorker(QObject):
         except Exception as e:
             self.error.emit(f"Send failed: {e}")
 
-
-# --------------- Port Selection Dialog ---------------
-
 class PortSelectDialog(QDialog):
-    """Dialog to pick a COM port and baud rate."""
 
-    port_selected = pyqtSignal(object)   # emits (port_str, baud_int)
+    port_selected = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
