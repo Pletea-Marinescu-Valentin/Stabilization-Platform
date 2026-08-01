@@ -10,10 +10,12 @@ from .config import (AXES, CONTROLLER_LABELS, CONTROLLERS, FIGURES, RESULTS,
                      SCENARIOS, TS, T_DIST_START, T_TOTAL, T_TRACK_END, WC, ZETA)
 from . import controllers as ctrl_mod
 from . import metrics as met
-from .design import (MS_TARGET, design_equal_robustness, reference_bandwidth,
-                     robustness_frontier, verify_designs)
+from .design import (MS_TARGET, design_all, design_equal_robustness,
+                     reference_bandwidth, robustness_frontier, verify_designs)
 from .plant import describe_scenarios, fit_all, payload_variant
-from .simulation import simulate
+from .simulate import simulate
+from .ingest import (EXPERIMENTS, collect as collect_experiments, discover,
+                     timing_report)
 
 def _ensure_dirs():
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -49,21 +51,50 @@ def run_everything(verbose=True):
                       f"GM={a.gain_margin_db:5.1f}dB  PM={a.phase_margin_deg:5.1f}deg  "
                       f"gain tol={f['gain_db']:5.1f}dB  freq tol={f['freq_pct']:5.1f}%")
 
+    if verbose:
+        print(f"\n2b. Fixed-performance baseline (wc={WC} rad/s, zeta={ZETA})")
+    out["fixed_spec"] = {}
+    for ax in AXES:
+        fd = design_all(plants[ax])
+        fv = verify_designs(plants[ax], fd)
+        out["fixed_spec"][ax] = {n: dict(bandwidth=a.bandwidth,
+                                         modulus_margin=a.modulus_margin)
+                                 for n, a in fv.items()}
+        if verbose:
+            print(f"  [{ax}] " + "  ".join(
+                f"{n}: BW={a.bandwidth:.2f} Ms={a.modulus_margin:.2f}"
+                for n, a in fv.items()))
+
     out["verification"] = {ax: {n: vars(a) for n, a in v.items()}
                            for ax, v in verification.items()}
     out["frontier"] = frontier
     out["design_meta"] = dmeta
     out["design_params"] = _design_params(designs)
 
+    measured = collect_experiments(verbose=verbose)
+    out["source"] = "measured" if measured else "model"
+
     if verbose:
-        print("\n3. Closed-loop simulation")
+        if measured:
+            print(f"\n3. Closed-loop runs (logs from {EXPERIMENTS})")
+            tm = _timing_summary()
+            out["timing"] = tm
+            print(f"  {tm['files']} runs, {tm['samples']} samples each, "
+                  f"T={tm['duration']:.1f}s, dt={tm['dt_mean']*1000:.2f}"
+                  f"+-{tm['dt_std']*1000:.2f} ms (jitter {tm['jitter_pct']:.1f}%)")
+        else:
+            print("\n3. Closed-loop runs (evaluated on the identified models)")
+
     runs, rows = {}, []
     for ax in AXES:
         for sc in SCENARIOS:
-            plant_sc, slosh = payload_variant(plants[ax], sc)
             for name in CONTROLLERS:
-                c = ctrl_mod.build(name, designs[ax], plants[ax])
-                res = simulate(plant_sc, slosh, c, ax, sc)
+                if measured and (ax, sc, name) in measured:
+                    res = measured[(ax, sc, name)]
+                else:
+                    plant_sc, slosh = payload_variant(plants[ax], sc)
+                    c = ctrl_mod.build(name, designs[ax], plants[ax])
+                    res = simulate(plant_sc, slosh, c, ax, sc)
                 runs[(ax, sc, name)] = res
                 _write_run_csv(res)
 
@@ -101,10 +132,6 @@ def run_everything(verbose=True):
                     cz = r[n]["critical_zeta"]
                     bits.append(f"{n}: zc={cz:.4f}" if cz else f"{n}: unstable")
                 print(f"  {ax:5s} {sc:5s} zeta_s={r['actual']:.4f} | " + "  ".join(bits))
-
-    if verbose:
-        print("\n6. MRAC adaptation-rate study")
-    out["mrac_sweep"] = _mrac_sweep(plants, designs, dmeta, verbose)
 
     _write_summary_csv(rows)
     with open(RESULTS / "summary.json", "w") as fh:
@@ -159,36 +186,15 @@ def _scores(rows, verbose=True):
                           f"   best={best} ({sens[best]:.0f}% of weightings)")
     return scores
 
-def _mrac_sweep(plants, designs, dmeta, verbose=True):
-    from .design import design_mrac
-
-    taus = [4.0, 8.0, 15.0, 25.0, 40.0, 60.0, 100.0, 200.0]
-    res = {}
-    for ax in AXES:
-        rows = []
-        for tau in taus:
-            dm = design_mrac(plants[ax], TS, dmeta[ax]["rst"]["wc"], 0.85,
-                             adapt_time=tau)
-            d = dict(designs[ax])
-            d["mrac"] = dm
-            acc_acq, acc_dist = [], []
-            for sc in SCENARIOS:
-                p_sc, slosh = payload_variant(plants[ax], sc)
-                c = ctrl_mod.build("mrac", d, plants[ax])
-                r = simulate(p_sc, slosh, c, ax, sc)
-                _, e1, u1 = r.window(1.0, T_TRACK_END)
-                _, e2, u2 = r.window(T_DIST_START, T_TOTAL)
-                acc_acq.append(met.compute(_, e1, u1)["IAE"])
-                acc_dist.append(met.compute(_, e2, u2)["RMSE"])
-            rows.append(dict(tau=tau, acq_iae=float(np.mean(acc_acq)),
-                             dist_rmse=float(np.mean(acc_dist))))
-        res[ax] = rows
-        if verbose:
-            best = min(rows, key=lambda r: r["dist_rmse"])
-            print(f"  [{ax}] best disturbance RMSE at tau={best['tau']:.0f}s "
-                  f"({best['dist_rmse']:.3f}); at tau=4s it is "
-                  f"{rows[0]['dist_rmse']:.3f}")
-    return res
+def _timing_summary():
+    reports = [timing_report(e) for e in discover()]
+    if not reports:
+        return {}
+    agg = lambda k: float(np.mean([r[k] for r in reports]))
+    return dict(files=len(reports), samples=int(np.min([r["n"] for r in reports])),
+                duration=agg("duration"), dt_mean=agg("dt_mean"),
+                dt_std=agg("dt_std"), dt_max=float(np.max([r["dt_max"] for r in reports])),
+                jitter_pct=agg("jitter_pct"))
 
 def _cost_table(designs, plants):
     cost = {}
@@ -202,11 +208,11 @@ def _write_run_csv(res):
     path = RESULTS / f"run_{res.axis}_{res.controller}_{res.scenario}.csv"
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["time_s", "base_tilt_deg", "angle_deg", "angle_meas_deg",
-                    "error_deg", "command_deg"])
+        w.writerow(["time_s", "base_tilt_deg", "angle_deg", "error_deg",
+                    "command_deg"])
         for i in range(len(res.t)):
             w.writerow([f"{res.t[i]:.5f}", f"{res.d[i]:.4f}", f"{res.y[i]:.4f}",
-                        f"{res.y_meas[i]:.4f}", f"{res.e[i]:.4f}", f"{res.u[i]:.4f}"])
+                        f"{res.e[i]:.4f}", f"{res.u[i]:.4f}"])
 
 def _write_summary_csv(rows):
     keys = ["axis", "scenario", "controller", "window", "RMSE", "MAE", "peak",

@@ -47,7 +47,7 @@ def fig_identification(plants):
     for ax_obj, axis in zip(axes, AXES):
         t, u, y = load_prbs(axis)
         p = plants[axis]
-        yhat = p.simulate(u)
+        yhat = p.model_output(u)
         split = int(0.7 * len(y))
         sl = slice(split, min(split + 500, len(y)))
         ax_obj.plot(t[sl] - t[sl][0], y[sl], color="0.25", lw=0.9, label="measured")
@@ -135,39 +135,6 @@ def fig_robustness(out):
     axes[0].legend(frameon=False, ncol=2)
     _save(fig, "robustness")
 
-def fig_mrac_adaptation(runs, axis, name):
-    fig, ax = plt.subplots(figsize=(COL, 1.7))
-    for sc, ls in zip(SCENARIOS, ["-", "--", ":"]):
-        r = runs[(axis, sc, "mrac")]
-        if r.theta is None:
-            continue
-        th = r.theta
-        rel = np.linalg.norm(th - th[0], axis=1) / max(np.linalg.norm(th[0]), 1e-9)
-        ax.plot(r.t[:len(rel)], 100 * rel, ls=ls, lw=1.0,
-                label=SCENARIOS[sc]["label"])
-    ax.set_xlabel("time [s]")
-    ax.set_ylabel(r"$\|\theta-\theta_0\|/\|\theta_0\|$ [\%]")
-    ax.legend(frameon=False, loc="upper left")
-    _save(fig, name)
-
-def fig_mrac_sweep(out):
-    fig, ax = plt.subplots(figsize=(COL, 1.8))
-    ax2 = ax.twinx()
-    for axis, mk in zip(AXES, ["o", "s"]):
-        rows = out["mrac_sweep"][axis]
-        tau = [r["tau"] for r in rows]
-        ax.semilogx(tau, [r["dist_rmse"] for r in rows], marker=mk, ms=3,
-                    color="#4C72B0", label=f"{axis}: dist. RMSE")
-        ax2.semilogx(tau, [r["acq_iae"] for r in rows], marker=mk, ms=3,
-                     ls="--", color="#C44E52", label=f"{axis}: acq. IAE")
-    ax.set_xlabel(r"adaptation time constant $\tau_a$ [s]")
-    ax.set_ylabel("disturbance RMSE [deg]", color="#4C72B0")
-    ax2.set_ylabel("acquisition IAE [deg s]", color="#C44E52")
-    ax2.grid(False)
-    ax.tick_params(axis="y", colors="#4C72B0")
-    ax2.tick_params(axis="y", colors="#C44E52")
-    _save(fig, "mrac_sweep")
-
 def make_all_figures(out, runs, plants, designs):
     FIGURES.mkdir(parents=True, exist_ok=True)
     plt.rcParams["text.usetex"] = False
@@ -177,6 +144,3 @@ def make_all_figures(out, runs, plants, designs):
     for axis in AXES:
         fig_error_traces(runs, axis, "full", f"traces_{axis}")
     fig_error_zoom(runs, "pitch", "full", "zoom_pitch")
-    fig_mrac_adaptation(runs, "pitch", "mrac_theta")
-    if "mrac_sweep" in out:
-        fig_mrac_sweep(out)

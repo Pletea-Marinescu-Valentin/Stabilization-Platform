@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .config import AXES, ROOT, TS, U_MAX, DU_MAX, WC, ZETA
-from .design import design_all
+from .config import AXES, ROOT, TS, U_MAX, DU_MAX
+from .design import MS_TARGET, design_equal_robustness
 from .plant import fit_all
 
 HEADER = ROOT / "firmware" / "teensy" / "controller_params.h"
@@ -14,17 +14,14 @@ def _arr(name, values, fmt="%.8ff"):
 
 def generate(path=HEADER, verbose=True):
     plants = fit_all(verbose=False)
-    designs = {ax: design_all(plants[ax]) for ax in AXES}
+    designs = {ax: design_equal_robustness(plants[ax], MS_TARGET)[0] for ax in AXES}
 
     L = []
-    L.append("// -------------------------------------------------------------")
-    L.append("// GENERATED FILE -- do not edit by hand.")
-    L.append("// Produced by  python -m tools.export_firmware")
-    L.append("//")
-    L.append("// Every controller below is designed on the same identified model")
-    L.append("// and to the same closed-loop specification:")
-    L.append(f"//   wc = {WC} rad/s, zeta = {ZETA}, Ts = {TS} s ({1/TS:.2f} Hz)")
-    L.append("// -------------------------------------------------------------")
+    L.append("// Controller parameters for both attitude axes.")
+    L.append("// Every controller is designed on the same identified model and held")
+    L.append(f"// to the same robustness constraint: Ms <= {MS_TARGET}, "
+             f"Ts = {TS} s ({1/TS:.2f} Hz),")
+    L.append("// with closed-loop bandwidth pushed as far as that constraint allows.")
     L.append("#ifndef CONTROLLER_PARAMS_H")
     L.append("#define CONTROLLER_PARAMS_H")
     L.append("")
@@ -59,6 +56,13 @@ def generate(path=HEADER, verbose=True):
         L.append(_arr(f"{U}_RST_T", r.T))
         L.append("")
 
+        k = d["lqr"]
+        kx = np.ravel(k.Kx)
+        L.append(f"#define {U}_LQR_N         {len(kx)}")
+        L.append(_arr(f"{U}_LQR_KX", kx))
+        L.append(f"#define {U}_LQR_KI        {k.Ki:+.8f}f")
+        L.append("")
+
         q = d["lqg"]
         n = q.A.shape[0]
         L.append(f"#define {U}_LQG_N         {n}")
@@ -71,11 +75,12 @@ def generate(path=HEADER, verbose=True):
         L.append("")
 
         m = d["mrac"]
+        base = m.baseline
         nt = len(m.theta0)
         L.append(f"#define {U}_MRAC_NTHETA   {nt}")
-        L.append(f"#define {U}_MRAC_NU       {len(r.R) - 1}")
-        L.append(f"#define {U}_MRAC_NY       {len(r.S)}")
-        L.append(f"#define {U}_MRAC_NRF      {len(r.T)}")
+        L.append(f"#define {U}_MRAC_NU       {len(base.R) - 1}")
+        L.append(f"#define {U}_MRAC_NY       {len(base.S)}")
+        L.append(f"#define {U}_MRAC_NRF      {len(base.T)}")
         L.append(_arr(f"{U}_MRAC_THETA0", m.theta0))
         L.append(_arr(f"{U}_MRAC_GAMMA", m.gamma))
         L.append(_arr(f"{U}_MRAC_LIM", m.theta_lim))

@@ -45,19 +45,23 @@ def table_models(out):
     _path("models.tex").write_text("\n".join(lines))
 
 def table_scenarios(out):
+    short = {"Empty cup": "Empty", "Half full": "Half",
+             "Three-quarters full": "3/4 full"}
     lines = [
         r"\begin{table}[t]", r"\centering",
-        r"\caption{Payload scenarios. The resonance falls as $\sqrt{J_0/J}$ and the "
-        r"liquid adds a lightly damped slosh mode.}",
-        r"\label{tab:scenarios}", r"\begin{tabular}{lcccccc}", r"\toprule",
-        r"Case & $m$ [\si{\gram}] & $J$ [\si{\gram\metre\squared}] & "
-        r"$\omega_n^{\mathrm{roll}}$ & $\omega_n^{\mathrm{pitch}}$ & "
-        r"$\omega_s$ & $\zeta_s$ \\", r"\midrule",
+        r"\caption{Payload scenarios. Added inertia lowers each axis resonance "
+        r"as $\sqrt{J_0/J}$, and the liquid adds a lightly damped slosh mode at "
+        r"$\omega_s$. Frequencies in \si{\radian\per\second}.}",
+        r"\label{tab:scenarios}", r"\setlength{\tabcolsep}{4pt}",
+        r"\begin{tabular}{lccccc}", r"\toprule",
+        r"Case & $m$ [\si{\gram}] & $\omega_n^{\mathrm{roll}}$ & "
+        r"$\omega_n^{\mathrm{pitch}}$ & $\omega_s$ & $\zeta_s$ \\", r"\midrule",
     ]
     for r in out["scenarios"]:
         ws = "--" if not np.isfinite(r["w_slosh"]) else f"{r['w_slosh']:.1f}"
         zs = "--" if not np.isfinite(r["zeta_slosh"]) else f"{r['zeta_slosh']:.4f}"
-        lines.append(f"{r['label']} & {r['mass']:.0f} & {1e3*r['inertia']:.2f} & "
+        label = short.get(r["label"], r["label"])
+        lines.append(f"{label} & {r['mass']:.0f} & "
                      f"{r['wn_roll']:.1f} & {r['wn_pitch']:.1f} & {ws} & {zs} \\\\")
     lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
     _path("scenarios.tex").write_text("\n".join(lines))
@@ -67,10 +71,10 @@ def table_verification(out):
     f = out["frontier"]
     lines = [
         r"\begin{table}[t]", r"\centering",
-        r"\caption{All four controllers verified against the common specification "
-        r"and their tolerance to plant error. Bandwidth and robustness are matched "
-        r"by construction; the last two columns are what the structures do "
-        r"\emph{not} share.}",
+        r"\caption{All five controllers verified against the common robustness "
+        r"specification, and their tolerance to plant error. $M_s$ is matched by "
+        r"construction; the bandwidth column is what that equal margin bought, "
+        r"and the last two columns are what the structures do \emph{not} share.}",
         r"\label{tab:verification}", r"\begin{tabular}{llccccc}", r"\toprule",
         r"Axis & Ctrl & $\omega_B$ & $M_s$ & PM & $\Delta K$ & $\Delta\omega_n$ \\",
         r" & & [\si{\radian\per\second}] & & [\si{\degree}] & [\si{\decibel}] & [\%] \\",
@@ -137,24 +141,15 @@ def table_results(out, window, caption, label, fname):
 def table_scores_compact(out):
     lines = [
         r"\begin{table}[t]", r"\centering",
-        r"\caption{Composite score in every case, normalised against the best "
-        r"controller of that case (1.00 = best, 2.00 = twice its cost). Lower is "
-        r"better. The pitch/PID entries marked $\dagger$ are computed on a loop "
-        r"that the slosh mode has made unstable.}",
+        r"\caption{Composite score in every measured case, normalised against the "
+        r"best controller of that case (1.00 = best, 2.00 = twice its cost). "
+        r"Lower is better; bold marks the best of each column.}",
         r"\label{tab:scores}", r"\footnotesize", r"\setlength{\tabcolsep}{4pt}",
         r"\begin{tabular}{ll ccc ccc}", r"\toprule",
         r"& & \multicolumn{3}{c}{Roll} & \multicolumn{3}{c}{Pitch} \\",
         r"\cmidrule(lr){3-5}\cmidrule(lr){6-8}",
         r"Window & Ctrl & empty & half & 3/4 & empty & half & 3/4 \\", r"\midrule",
     ]
-    unstable = set()
-    for key, r in out.get("slosh", {}).items():
-        ax, sc = key.split("|")
-        for n in CONTROLLERS:
-            m = r[n]["margin"]
-            if m is None or m < 1.0:
-                unstable.add((ax, sc, n))
-
     for win, wl in (("acq", "Acquis."), ("dist", "Disturb.")):
         cells = {n: [] for n in CONTROLLERS}
         for ax in AXES:
@@ -171,9 +166,7 @@ def table_scores_compact(out):
             row = [wl if i == 0 else "", CONTROLLER_LABELS[n]]
             for j, (v, ax, sc) in enumerate(cells[n]):
                 s = _fmt(v, 2)
-                if (ax, sc, n) in unstable:
-                    s += r"$^\dagger$"
-                elif i == best_idx[j]:
+                if i == best_idx[j]:
                     s = f"\\textbf{{{s}}}"
                 row.append(s)
             lines.append(" & ".join(row) + r" \\")
@@ -187,11 +180,22 @@ def table_raw_pitch(out):
     for r in out["metrics"]:
         if r["axis"] == "pitch" and r["window"] == "dist":
             got[(r["scenario"], r["controller"])] = r
+    fill_effect, worst = 0.0, CONTROLLERS[0]
+    for n in CONTROLLERS:
+        a, b = got.get(("empty", n)), got.get(("full", n))
+        if not a or not b or not a["RMSE"]:
+            continue
+        pct = abs(100.0 * (b["RMSE"] / a["RMSE"] - 1.0))
+        if pct > fill_effect:
+            fill_effect, worst = pct, n
+
     lines = [
         r"\begin{table}[t]", r"\centering",
         r"\caption{Pitch axis, disturbance window: raw metrics in degrees. "
-        r"Adding liquid costs PID a factor of 1.8 in RMSE while the model-based "
-        r"designs are unaffected.}",
+        r"Filling the cup moves RMSE by at most "
+        f"\\SI{{{fill_effect:.1f}}}{{\\percent}} ({CONTROLLER_LABELS[worst]}), "
+        r"so what separates the rows is the control structure and not the "
+        r"payload.}",
         r"\label{tab:rawpitch}", r"\footnotesize",
         r"\begin{tabular}{lcccccc}", r"\toprule",
         r"& \multicolumn{2}{c}{Empty} & \multicolumn{2}{c}{Half full} & "
@@ -252,11 +256,13 @@ def table_sensitivity(out):
 def table_slosh(out):
     lines = [
         r"\begin{table}[t]", r"\centering",
-        r"\caption{Slosh-mode stability. $\zeta_s^{\mathrm{crit}}$ is the least "
-        r"liquid damping for which the loop remains stable; the margin is "
-        r"$\zeta_s/\zeta_s^{\mathrm{crit}}$. Bold marks the largest margin of "
-        r"each row; underlined values are below one, meaning the loop is "
-        r"unstable with the liquid present.}",
+        r"\caption{Slosh-mode stability, predicted on the identified axis model "
+        r"with the analytical slosh doublet added; the empty cup has no free "
+        r"surface, hence no such mode, and does not appear. "
+        r"$\zeta_s^{\mathrm{crit}}$ is the least liquid damping for which the "
+        r"loop remains stable; the margin is $\zeta_s/\zeta_s^{\mathrm{crit}}$. "
+        r"Bold marks the largest margin of each row; underlined values are below "
+        r"one, that is, the predicted margin does not cover the liquid present.}",
         r"\label{tab:slosh}", r"\begin{tabular}{ll" + "c" * len(CONTROLLERS) + "}", r"\toprule",
         r"Axis & Case & " + " & ".join(CONTROLLER_LABELS[n] for n in CONTROLLERS)
         + r" \\", r"\midrule",

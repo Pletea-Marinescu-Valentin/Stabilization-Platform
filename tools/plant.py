@@ -48,7 +48,7 @@ class AxisPlant:
         num = np.concatenate([np.zeros(self.delay), num])
         return num, den
 
-    def simulate(self, u, slosh=None):
+    def model_output(self, u, slosh=None):
         num, den = self.discrete(slosh)
         return lfilter(num, den, u)
 

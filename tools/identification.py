@@ -69,7 +69,7 @@ class AxisModel:
         zeta = np.where(wn > 0, -np.real(s) / np.maximum(wn, 1e-12), 0.0)
         return wn, zeta
 
-    def simulate(self, u: np.ndarray, y0: np.ndarray | None = None) -> np.ndarray:
+    def model_output(self, u: np.ndarray, y0: np.ndarray | None = None) -> np.ndarray:
         y = lfilter(self.num, self.den, u)
         if y0 is not None:
             start = max(len(self.a), len(self.b) + self.delay)
@@ -97,14 +97,14 @@ def fit_oe(u, y, na, nb, d, ts=TS, axis="") -> AxisModel:
 
     def residual(p):
         m = AxisModel(axis, p[:na], p[na:], d, ts)
-        yhat = m.simulate(u, y)
+        yhat = m.model_output(u, y)
         if not np.all(np.isfinite(yhat)):
             return np.full(len(y), 1e6)
         return yhat - y
 
     sol = least_squares(residual, theta0, method="lm", max_nfev=30000)
     model = AxisModel(axis, sol.x[:na], sol.x[na:], d, ts)
-    yhat = model.simulate(u, y)
+    yhat = model.model_output(u, y)
     model.fit_train = _fit_percent(y, yhat)
     model.residual = y - yhat
     model.noise_std = float(np.std(np.diff(model.residual)) / np.sqrt(2.0))
@@ -123,7 +123,7 @@ def select_order(u, y, na_range=(1, 5), nb_range=(1, 4), d_range=(0, 4), ts=TS, 
                     m = fit_oe(utr, ytr, na, nb, d, ts, axis)
                     if np.max(np.abs(m.poles())) >= 1.0:
                         continue
-                    yhat = m.simulate(uva, yva)
+                    yhat = m.model_output(uva, yva)
                     fv = _fit_percent(yva, yhat)
                     table.append(dict(na=na, nb=nb, d=d, fit_valid=fv, fit_train=m.fit_train))
                 except Exception:
@@ -139,7 +139,7 @@ def identify_axis(axis: str, na=2, nb=2, d=None, verbose=True) -> AxisModel:
 
     split = int(0.7 * len(y))
     model = fit_oe(u[:split], y[:split], na, nb, d, TS, axis)
-    model.fit_valid = _fit_percent(y[split:], model.simulate(u[split:], y[split:]))
+    model.fit_valid = _fit_percent(y[split:], model.model_output(u[split:], y[split:]))
 
     final = fit_oe(u, y, na, nb, d, TS, axis)
     final.fit_valid = model.fit_valid

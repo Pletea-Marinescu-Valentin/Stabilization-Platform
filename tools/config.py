@@ -31,9 +31,9 @@ SCENARIOS = {
     "full":  dict(label="Three-quarters full", fill=0.75, mass_g=581.0),
 }
 
-CONTROLLERS = ["pid", "rst", "lqg", "lqr", "mrac"]
-CONTROLLER_LABELS = {"pid": "PID", "rst": "RST", "lqg": "LQG",
-                     "lqr": "LQR", "mrac": "MRAC"}
+CONTROLLERS = ["pid", "rst", "lqr", "lqg", "mrac"]
+CONTROLLER_LABELS = {"pid": "PID", "rst": "RST", "lqr": "LQR",
+                     "lqg": "LQG", "mrac": "MRAC"}
 AXES = ["roll", "pitch"]
 
 T_TOTAL = 80.0

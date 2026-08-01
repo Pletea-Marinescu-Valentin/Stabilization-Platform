@@ -14,7 +14,7 @@ static const float DEG_TO_MOTOR_REV = 0.01745329f;
 #define MOTEUS_MODE_FAULT 1
 #define MAX_TORQUE        7.0f
 
-enum ControlMode { MODE_PID = 1, MODE_RST = 2, MODE_LQG = 3, MODE_MRAC = 4 };
+enum ControlMode { MODE_LQR = 0, MODE_PID = 1, MODE_RST = 2, MODE_LQG = 3, MODE_MRAC = 4 };
 static volatile int controlMode = MODE_PID;
 
 static const float TARGET_ROLL_DEG  = -175.44f;
@@ -60,6 +60,9 @@ struct AxisController {
     int   n;
     float xhat[4], xint;
 
+    const float *KxLqr;
+    float Ki_lqr, yPrev;
+
     const float *theta0, *gamma, *lim, *am, *bm;
     int   nTheta, nU, nY, nRf;
     float theta[8], ymHist[4], rmHist[4];
@@ -76,6 +79,7 @@ static void axisReset(AxisController *c) {
         c->xhat[i] = 0.0f; c->ymHist[i] = c->rmHist[i] = 0.0f;
     }
     c->xint = 0.0f;
+    c->yPrev = 0.0f;
     for (int i = 0; i < c->nTheta; i++) c->theta[i] = c->theta0[i];
 }
 
@@ -112,6 +116,16 @@ static float stepRST(AxisController *c, float r, float y) {
     float u = limitCommand(c, acc);
     for (int i = c->nR - 2; i > 0; i--) c->uHist[i] = c->uHist[i - 1];
     if (c->nR > 1) c->uHist[0] = u;
+    return u;
+}
+
+static float stepLQR(AxisController *c, float r, float y) {
+
+    float uRaw = -(c->KxLqr[0] * y + c->KxLqr[1] * c->yPrev
+                   + c->KxLqr[2] * c->u_prev) - c->Ki_lqr * c->xint;
+    float u = limitCommand(c, uRaw);
+    if (!c->saturated) c->xint += CTRL_TS * (r - y);
+    c->yPrev = y;
     return u;
 }
 
@@ -181,6 +195,7 @@ static float stepMRAC(AxisController *c, float r, float y) {
 
 static float stepAxis(AxisController *c, float r, float y) {
     switch (controlMode) {
+        case MODE_LQR:  return stepLQR(c, r, y);
         case MODE_RST:  return stepRST(c, r, y);
         case MODE_LQG:  return stepLQG(c, r, y);
         case MODE_MRAC: return stepMRAC(c, r, y);
@@ -196,6 +211,7 @@ static void configureAxes() {
     rollC.A = ROLL_LQG_A; rollC.B = ROLL_LQG_B; rollC.C = ROLL_LQG_C;
     rollC.Kx = ROLL_LQG_KX; rollC.L = ROLL_LQG_L;
     rollC.Ki_lqg = ROLL_LQG_KI; rollC.n = ROLL_LQG_N;
+    rollC.KxLqr = ROLL_LQR_KX; rollC.Ki_lqr = ROLL_LQR_KI;
     rollC.theta0 = ROLL_MRAC_THETA0; rollC.gamma = ROLL_MRAC_GAMMA;
     rollC.lim = ROLL_MRAC_LIM; rollC.am = ROLL_MRAC_AM; rollC.bm = ROLL_MRAC_BM;
     rollC.nTheta = ROLL_MRAC_NTHETA; rollC.nU = ROLL_MRAC_NU;
@@ -210,6 +226,7 @@ static void configureAxes() {
     pitchC.A = PITCH_LQG_A; pitchC.B = PITCH_LQG_B; pitchC.C = PITCH_LQG_C;
     pitchC.Kx = PITCH_LQG_KX; pitchC.L = PITCH_LQG_L;
     pitchC.Ki_lqg = PITCH_LQG_KI; pitchC.n = PITCH_LQG_N;
+    pitchC.KxLqr = PITCH_LQR_KX; pitchC.Ki_lqr = PITCH_LQR_KI;
     pitchC.theta0 = PITCH_MRAC_THETA0; pitchC.gamma = PITCH_MRAC_GAMMA;
     pitchC.lim = PITCH_MRAC_LIM; pitchC.am = PITCH_MRAC_AM; pitchC.bm = PITCH_MRAC_BM;
     pitchC.nTheta = PITCH_MRAC_NTHETA; pitchC.nU = PITCH_MRAC_NU;
@@ -280,7 +297,7 @@ void loop() {
 
     if (Serial.available()) {
         char ch = Serial.read();
-        if (ch >= '1' && ch <= '4') {
+        if (ch >= '0' && ch <= '4') {
             controlMode = ch - '0';
             axisReset(&rollC);
             axisReset(&pitchC);

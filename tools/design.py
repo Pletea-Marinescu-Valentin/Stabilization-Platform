@@ -433,9 +433,71 @@ def design_mrac(plant: AxisPlant, ts=TS, wc=WC, zeta=ZETA,
                       theta_lim=theta_lim, dead_zone=0.15, lam=lam, ts=ts,
                       baseline=baseline)
 
+def _lqr_state_space(plant: AxisPlant):
+    num, den = plant.discrete()
+    a1, a2 = float(den[1]), float(den[2])
+    b0 = float(num[plant.delay])
+    A = np.array([[-a1, -a2, b0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    B = np.array([[0.0], [0.0], [1.0]])
+    C = np.array([[1.0, 0.0, 0.0]])
+    return A, B, C
+
+def _lqr_from_weights(plant, A, B, C, Aa, Ba, Ca, p, ts):
+    nx = A.shape[0]
+    qy, qi = np.exp(np.clip(p, -25, 25))
+    Q = qy * (Ca.T @ Ca)
+    Q[nx, nx] += qi
+    P = solve_discrete_are(Aa, Ba, Q + 1e-9 * np.eye(nx + 1), np.array([[1.0]]))
+    K = np.linalg.solve(np.array([[1.0]]) + Ba.T @ P @ Ba, Ba.T @ P @ Aa)
+    return LQRDesign(A=A, B=B, C=C, Kx=K[:, :nx], Ki=float(K[0, nx]), ts=ts,
+                     q_y=float(qy), q_i=float(qi))
+
+def design_lqr(plant: AxisPlant, ts=TS, wc=WC, zeta=ZETA) -> LQRDesign:
+    A, B, C = _lqr_state_space(plant)
+    nx = A.shape[0]
+    Aa = np.block([[A, np.zeros((nx, 1))], [-C * ts, np.ones((1, 1))]])
+    Ba = np.vstack([B, np.zeros((1, 1))])
+    Ca = np.hstack([C, np.zeros((1, 1))])
+
+    bw_target = reference_bandwidth(wc, zeta)
+
+    def residual(p):
+        try:
+            d = _lqr_from_weights(plant, A, B, C, Aa, Ba, Ca, p, ts)
+            if np.max(np.abs(np.linalg.eigvals(d.closed_loop(plant)))) >= 0.999:
+                return np.array([10.0, 10.0])
+            bw, ms, mt = loop_metrics(plant, d.response, ts)
+        except Exception:
+            return np.array([10.0, 10.0])
+        return np.array([4.0 * np.log(max(bw, 1e-6) / bw_target),
+                         4.0 * max(ms - 1.30, 0.0)])
+
+    # The weight surface has local minima that trap a purely local search, so
+    # start from the best point of a coarse grid and refine from there.
+    starts, best_cost = [], np.inf
+    for lqy in np.linspace(-6.0, 10.0, 24):
+        for lqi in np.linspace(-4.0, 12.0, 24):
+            cost = float(np.sum(residual(np.array([lqy, lqi])) ** 2))
+            if cost < best_cost:
+                best_cost, starts = cost, [np.array([lqy, lqi])]
+    starts += [np.array([0.0, 0.0]), np.array([4.0, 0.0])]
+
+    best, best_cost = None, np.inf
+    for q0 in starts:
+        try:
+            sol = least_squares(residual, q0, method="lm", max_nfev=400)
+        except Exception:
+            continue
+        if best is None or sol.cost < best_cost:
+            best, best_cost = sol, sol.cost
+    if best is None:
+        raise RuntimeError("LQR weight selection failed to converge")
+    return _lqr_from_weights(plant, A, B, C, Aa, Ba, Ca, best.x, ts)
+
 def design_all(plant: AxisPlant, ts=TS, wc=WC, zeta=ZETA):
     return dict(pid=design_pid(plant, ts, wc, zeta),
                 rst=design_rst(plant, ts, wc, zeta),
+                lqr=design_lqr(plant, ts, wc, zeta),
                 lqg=design_lqg(plant, ts, wc, zeta),
                 mrac=design_mrac(plant, ts, wc, zeta))
 
@@ -469,7 +531,7 @@ def controller_response(name, designs):
 def _closed_loop_poles_named(plant, slosh, designs, name, ts=TS):
     return closed_loop_max_pole(plant, slosh, designs, name, ts)
 
-CONTROLLERS_FRONTIER = ("pid", "rst", "lqg", "lqr", "mrac")
+CONTROLLERS_FRONTIER = ("pid", "rst", "lqr", "lqg", "mrac")
 
 def robustness_frontier(plant: AxisPlant, designs, ts=TS, ms_limit=2.0):
     from .plant import AxisPlant as _AP
@@ -819,9 +881,10 @@ def verify_designs(plant: AxisPlant, designs: dict, ts=TS, wc=WC, zeta=ZETA):
                               np.linalg.eigvals(q.closed_loop(plant)), ts,
                               q.step(plant, n))
 
-    k = designs["lqr"]
-    out["lqr"] = analyse_loop("LQR", plant, k.response,
-                              np.linalg.eigvals(k.closed_loop(plant)), ts)
+    if "lqr" in designs:
+        k = designs["lqr"]
+        out["lqr"] = analyse_loop("LQR", plant, k.response,
+                                  np.linalg.eigvals(k.closed_loop(plant)), ts)
 
     m = designs["mrac"]
     out["mrac"] = analyse_loop("MRAC", plant, m.response, np.roots(char), ts, step_rst)
