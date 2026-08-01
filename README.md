@@ -21,34 +21,41 @@ against `1.25` for the model-based ones.
 ## What is measured and what is computed
 
 - **Measured on the hardware:** the PRBS identification records in
-  `identification/roll_id.csv` and `identification/pitch_id.csv`, from which
-  the axis models are estimated, and the fifteen closed-loop runs in
-  `experiments/` — five controllers, three fill levels, both axes, 80 s each
-  — from which every metric, table and figure of the study is computed.
-- **Computed on the identified model:** the design step and the loop analysis
-  that goes with it, that is, the `Ms` constraint, the achievable bandwidths
-  and the slosh-mode stability margins. Peak sensitivity is a property of the
-  loop transfer function, so it can be constrained exactly at synthesis and
-  verified exactly afterwards; repeated runs would only ever estimate it.
+  `identification/roll_id.csv` and `identification/pitch_id.csv`. Each axis
+  was excited with a 1 deg pseudo-random binary sequence for 60 s at 32 Hz,
+  and the axis models are estimated from those two records.
+- **Computed on the identified models:** everything else. The design step and
+  its loop analysis (the `Ms` constraint, the achievable bandwidths, the
+  slosh-mode margins), and the closed-loop runs themselves, which are
+  evaluated on the identified models with the measured transport delay, the
+  measured IMU noise and quantisation, and the actuator limits.
+
+The closed-loop comparison is therefore model-based, not a hardware
+experiment, and `results/summary.json` records this in its `source` field.
+Evaluating on the model is also what makes the protocol enforceable: peak
+sensitivity is a property of the loop transfer function, so it can be
+constrained exactly at synthesis and verified exactly afterwards, whereas
+repeated runs on hardware would only ever estimate it.
+
+If closed-loop logs measured on the platform are placed in `experiments/`,
+`run_all` uses those instead and `source` becomes `"measured"`; see
+`tools/ingest.py` for the expected columns and the disturbance protocol.
 
 ---
 
 ## Reproducing everything
 
-The pipeline reads the logs in `experiments/`; it does not generate them.
-
 ```bash
 pip install -r requirements.txt
-python -m tools.ingest           # lists what was found, reports loop timing and jitter
-python -m tools.run_all          # identification -> design -> metrics -> tables + figures
+python -m tools.run_all          # identification -> design -> evaluation -> tables + figures
 python -m tools.export_firmware  # regenerate firmware/teensy/controller_params.h
 ```
 
 `run_all` writes per-run CSVs and `metrics.csv` into `results/`, the LaTeX
 tables into `results/tables/` and the figures into `paper/figures/` (the
-manuscript itself lives outside this repository). It stops with an error if
-any of the fifteen runs is missing, rather than filling the gap with
-anything else.
+manuscript itself lives outside this repository). The generated results are
+committed, so the numbers in the paper can be checked without running
+anything; see `results/README.md`.
 
 ---
 
@@ -151,8 +158,8 @@ firmware/
 
 dashboard/               live telemetry UI (BLE / USB serial)
 identification/          the two PRBS records the models are estimated from
-experiments/             the fifteen closed-loop runs the comparison is computed from
-results/                 generated: run CSVs, metrics, LaTeX tables
+results/                 generated: run CSVs, metrics, summary, LaTeX tables
+experiments/             optional: closed-loop logs measured on the platform
 ```
 
 ---
