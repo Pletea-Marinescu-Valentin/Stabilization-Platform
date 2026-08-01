@@ -1,0 +1,50 @@
+\begin{table}[t]
+\centering
+\caption{Disturbance window (\SIrange{20}{80}{\second}): trapezoidal tilts, rocking and a sweep through the slosh band.}
+\label{tab:dist}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llccccc}
+\toprule
+Case & Ctrl & RMSE & IAE & Peak & Effort & Score \\
+\midrule
+\multicolumn{7}{l}{\textit{Roll axis}} \\
+Empty cup & PID & 1.24 & 53.5 & \textbf{5.98} & \textbf{1.37} & 1.09 \\
+ & RST & 1.23 & 50.3 & 5.99 & 1.38 & 1.06 \\
+ & LQR & \textbf{1.14} & \textbf{46.1} & 5.98 & 1.64 & \textbf{1.03} \\
+ & LQG & 1.27 & 53.4 & 5.99 & 1.46 & 1.10 \\
+ & MRAC & 1.21 & 50.2 & 6.00 & 1.50 & 1.06 \\
+\addlinespace[2pt]
+Half full & PID & 1.24 & 55.5 & \textbf{5.96} & 1.42 & 1.07 \\
+ & RST & 1.23 & 51.1 & 5.99 & \textbf{1.39} & \textbf{1.03} \\
+ & LQR & \textbf{1.15} & \textbf{49.7} & 5.97 & 1.73 & 1.04 \\
+ & LQG & 1.28 & 56.1 & 6.01 & 1.52 & 1.10 \\
+ & MRAC & 1.21 & 50.6 & 6.00 & 1.51 & 1.03 \\
+\addlinespace[2pt]
+Three-quarters full & PID & 1.25 & 55.9 & 6.01 & 1.43 & 1.07 \\
+ & RST & 1.23 & 51.2 & \textbf{5.98} & \textbf{1.39} & \textbf{1.02} \\
+ & LQR & \textbf{1.16} & \textbf{50.3} & 6.02 & 1.74 & 1.04 \\
+ & LQG & 1.28 & 56.3 & 5.98 & 1.53 & 1.09 \\
+ & MRAC & 1.21 & 50.7 & 5.99 & 1.52 & 1.03 \\
+\midrule
+\multicolumn{7}{l}{\textit{Pitch axis}} \\
+Empty cup & PID & 1.65 & 76.2 & 5.99 & \textbf{0.34} & 1.37 \\
+ & RST & 1.23 & 50.3 & 5.99 & 0.46 & 1.11 \\
+ & LQR & \textbf{1.12} & \textbf{46.7} & 5.99 & 0.55 & \textbf{1.09} \\
+ & LQG & 1.52 & 66.5 & 5.99 & 0.43 & 1.30 \\
+ & MRAC & 1.29 & 50.4 & \textbf{5.98} & 0.62 & 1.19 \\
+\addlinespace[2pt]
+Half full & PID & 1.67 & 80.2 & 6.05 & \textbf{0.35} & 1.40 \\
+ & RST & 1.23 & 51.4 & 5.99 & 0.46 & 1.10 \\
+ & LQR & \textbf{1.12} & \textbf{47.1} & \textbf{5.99} & 0.55 & \textbf{1.08} \\
+ & LQG & 1.53 & 67.2 & 5.99 & 0.43 & 1.29 \\
+ & MRAC & 1.31 & 52.9 & 5.99 & 0.63 & 1.21 \\
+\addlinespace[2pt]
+Three-quarters full & PID & 1.67 & 79.2 & 6.02 & \textbf{0.35} & 1.39 \\
+ & RST & 1.24 & 51.4 & 5.99 & 0.46 & 1.11 \\
+ & LQR & \textbf{1.12} & \textbf{47.3} & 5.99 & 0.55 & \textbf{1.09} \\
+ & LQG & 1.52 & 67.1 & 5.99 & 0.43 & 1.29 \\
+ & MRAC & 1.31 & 52.2 & \textbf{5.98} & 0.63 & 1.20 \\
+\bottomrule
+\end{tabular}
+\end{table}

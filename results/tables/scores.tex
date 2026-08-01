@@ -1,0 +1,26 @@
+\begin{table}[t]
+\centering
+\caption{Composite score in every measured case, normalised against the best controller of that case (1.00 = best, 2.00 = twice its cost). Lower is better; bold marks the best of each column.}
+\label{tab:scores}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{ll ccc ccc}
+\toprule
+& & \multicolumn{3}{c}{Roll} & \multicolumn{3}{c}{Pitch} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+Window & Ctrl & empty & half & 3/4 & empty & half & 3/4 \\
+\midrule
+Acquis. & PID & 1.17 & 1.12 & 1.14 & 1.59 & 1.71 & 1.66 \\
+ & RST & 1.12 & \textbf{1.03} & \textbf{1.03} & \textbf{1.09} & \textbf{1.08} & \textbf{1.08} \\
+ & LQR & \textbf{1.04} & 1.07 & 1.11 & 1.69 & 1.66 & 1.65 \\
+ & LQG & 1.15 & 1.12 & 1.15 & 1.53 & 1.51 & 1.51 \\
+ & MRAC & 1.18 & 1.07 & 1.08 & 1.22 & 1.16 & 1.17 \\
+\midrule
+Disturb. & PID & 1.09 & 1.07 & 1.07 & 1.37 & 1.40 & 1.39 \\
+ & RST & 1.06 & \textbf{1.03} & \textbf{1.02} & 1.11 & 1.10 & 1.11 \\
+ & LQR & \textbf{1.03} & 1.04 & 1.04 & \textbf{1.09} & \textbf{1.08} & \textbf{1.09} \\
+ & LQG & 1.10 & 1.10 & 1.09 & 1.30 & 1.29 & 1.29 \\
+ & MRAC & 1.06 & 1.03 & 1.03 & 1.19 & 1.21 & 1.20 \\
+\bottomrule
+\end{tabular}
+\end{table}

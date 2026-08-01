@@ -5,7 +5,6 @@
 __pycache__/
 *.log
 *.tmp
-results/
 *.aux
 *.bbl
 *.blg

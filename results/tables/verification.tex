@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\caption{All five controllers verified against the common robustness specification, and their tolerance to plant error. $M_s$ is matched by construction; the bandwidth column is what that equal margin bought, and the last two columns are what the structures do \emph{not} share.}
+\label{tab:verification}
+\begin{tabular}{llccccc}
+\toprule
+Axis & Ctrl & $\omega_B$ & $M_s$ & PM & $\Delta K$ & $\Delta\omega_n$ \\
+ & & [\si{\radian\per\second}] & & [\si{\degree}] & [\si{\decibel}] & [\%] \\
+\midrule
+Roll & PID & 3.93 & 1.28 & 81 & 7.2 & 75 \\
+ & RST & 6.48 & 1.31 & 69 & 8.6 & 145 \\
+ & LQR & 6.50 & 1.28 & 76 & 7.6 & 43 \\
+ & LQG & 5.00 & 1.28 & 76 & 7.6 & 88 \\
+ & MRAC & 6.48 & 1.31 & 69 & 8.6 & 145 \\
+\midrule
+Pitch & PID & 1.86 & 1.31 & 85 & 6.4 & 100 \\
+ & RST & 6.48 & 1.31 & 69 & 8.6 & 58 \\
+ & LQR & 5.17 & 1.30 & 77 & 6.8 & 27 \\
+ & LQG & 3.30 & 1.29 & 75 & 7.2 & 52 \\
+ & MRAC & 6.48 & 1.31 & 69 & 8.6 & 58 \\
+\bottomrule
+\end{tabular}
+\end{table}

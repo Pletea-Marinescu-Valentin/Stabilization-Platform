@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering
+\caption{Pitch axis, disturbance window: raw metrics in degrees. Filling the cup moves RMSE by at most \SI{2.1}{\percent} (MRAC), so what separates the rows is the control structure and not the payload.}
+\label{tab:rawpitch}
+\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{2}{c}{Empty} & \multicolumn{2}{c}{Half full} & \multicolumn{2}{c}{3/4 full} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Ctrl & RMSE & peak & RMSE & peak & RMSE & peak \\
+\midrule
+PID & 1.65 & 5.99 & 1.67 & 6.05 & 1.67 & 6.02 \\
+RST & 1.23 & 5.99 & 1.23 & 5.99 & 1.24 & 5.99 \\
+LQR & 1.12 & 5.99 & 1.12 & 5.99 & 1.12 & 5.99 \\
+LQG & 1.52 & 5.99 & 1.53 & 5.99 & 1.52 & 5.99 \\
+MRAC & 1.29 & 5.98 & 1.31 & 5.99 & 1.31 & 5.98 \\
+\bottomrule
+\end{tabular}
+\end{table}
