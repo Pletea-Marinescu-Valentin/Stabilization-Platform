@@ -141,7 +141,7 @@ def table_results(out, window, caption, label, fname):
 def table_scores_compact(out):
     lines = [
         r"\begin{table}[ht]", r"\centering",
-        r"\caption{Composite score in every measured case, normalised against the "
+        r"\caption{Composite score in every case, normalised against the "
         r"best controller of that case (1.00 = best, 2.00 = twice its cost). "
         r"Lower is better; bold marks the best of each column.}",
         r"\label{tab:scores}", r"\footnotesize", r"\setlength{\tabcolsep}{4pt}",

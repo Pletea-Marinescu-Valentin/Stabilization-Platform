@@ -14,6 +14,7 @@ from .design import (MS_TARGET, design_all, design_equal_robustness,
                      reference_bandwidth, robustness_frontier, verify_designs)
 from .plant import describe_scenarios, fit_all, payload_variant
 from .simulate import simulate
+from . import uncertainty as unc
 from .ingest import (EXPERIMENTS, collect as collect_experiments, discover,
                      timing_report)
 
@@ -132,6 +133,10 @@ def run_everything(verbose=True):
                     cz = r[n]["critical_zeta"]
                     bits.append(f"{n}: zc={cz:.4f}" if cz else f"{n}: unstable")
                 print(f"  {ax:5s} {sc:5s} zeta_s={r['actual']:.4f} | " + "  ".join(bits))
+
+    if verbose:
+        print("\n6. Identification uncertainty and ranking stability")
+    out["uncertainty"] = unc.study(plants, designs, n_draws=150, verbose=verbose)
 
     _write_summary_csv(rows)
     with open(RESULTS / "summary.json", "w") as fh:
