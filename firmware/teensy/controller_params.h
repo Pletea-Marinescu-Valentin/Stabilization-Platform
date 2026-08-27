@@ -11,81 +11,81 @@
 #define CTRL_DU_MAX        1.5000f      // deg per sample
 
 // ===================== ROLL =====================
-// plant: K=-2.2673 deg/deg, wn=43.863 rad/s, zeta=0.1150, delay=2 samples
+// plant: K=-2.2187 deg/deg, wn=46.671 rad/s, zeta=0.1428, delay=2 samples
 
-#define ROLL_PID_KP        -0.00660314f
-#define ROLL_PID_KI        -1.44338366f
-#define ROLL_PID_KD        -0.00107531f
+#define ROLL_PID_KP        -0.00326176f
+#define ROLL_PID_KI        -1.79537457f
+#define ROLL_PID_KD        -0.00256669f
 #define ROLL_PID_TF        0.12500000f
 
 #define ROLL_RST_NR        3
 #define ROLL_RST_NS        3
 #define ROLL_RST_NT        3
-static const float ROLL_RST_R[3] = {1.00000000f, -1.60311742f, 0.60311742f};
-static const float ROLL_RST_S[3] = {-0.01624828f, 0.00576353f, -0.01185593f};
-static const float ROLL_RST_T[3] = {-0.01624828f, 0.00576353f, -0.01185593f};
+static const float ROLL_RST_R[3] = {1.00000000f, -1.63792462f, 0.63792462f};
+static const float ROLL_RST_S[3] = {-0.01315602f, 0.00271207f, -0.00867515f};
+static const float ROLL_RST_T[3] = {-0.01315602f, 0.00271207f, -0.00867515f};
 
 #define ROLL_LQR_N         3
-static const float ROLL_LQR_KX[3] = {-0.03724765f, 0.05276899f, 0.22544620f};
-#define ROLL_LQR_KI        +2.49292341f
+static const float ROLL_LQR_KX[3] = {-0.04894199f, 0.05293458f, 0.25883931f};
+#define ROLL_LQR_KI        +3.08955070f
 
 #define ROLL_LQG_N         2
-static const float ROLL_LQG_A[4] = {0.35471626f, -0.72967298f, 1.00000000f, 0.00000000f};
+static const float ROLL_LQG_A[4] = {0.20614658f, -0.65940501f, 1.00000000f, 0.00000000f};
 static const float ROLL_LQG_B[2] = {1.00000000f, 0.00000000f};
-static const float ROLL_LQG_C[2] = {0.00000000f, -3.11739921f};
-static const float ROLL_LQG_KX[2] = {0.17260661f, 0.02779209f};
-#define ROLL_LQG_KI        +1.96086792f
-static const float ROLL_LQG_L[2] = {0.18997128f, -0.10941707f};
+static const float ROLL_LQG_C[2] = {0.00000000f, -3.22435637f};
+static const float ROLL_LQG_KX[2] = {0.18710527f, 0.08145019f};
+#define ROLL_LQG_KI        +2.32397593f
+static const float ROLL_LQG_L[2] = {0.17705243f, -0.05609175f};
 
 #define ROLL_MRAC_NTHETA   8
 #define ROLL_MRAC_NU       2
 #define ROLL_MRAC_NY       3
 #define ROLL_MRAC_NRF      3
-static const float ROLL_MRAC_THETA0[8] = {1.60311742f, -0.60311742f, 0.01624828f, -0.00576353f, 0.01185593f, -0.01624828f, 0.00576353f, -0.01185593f};
-static const float ROLL_MRAC_GAMMA[8] = {0.00084331f, 0.00032247f, 0.00001681f, 0.00001135f, 0.00001452f, 0.00001681f, 0.00001135f, 0.00001452f};
-static const float ROLL_MRAC_LIM[8] = {0.67330932f, 0.27330932f, 0.03856166f, 0.03436776f, 0.03680472f, 0.03856166f, 0.03436776f, 0.03680472f};
-static const float ROLL_MRAC_AM[3] = {1.00000000f, -1.60311742f, 0.65376979f};
-static const float ROLL_MRAC_BM[2] = {0.00000000f, 0.05065236f};
+static const float ROLL_MRAC_THETA0[8] = {1.63792462f, -0.63792462f, 0.01315602f, -0.00271207f, 0.00867515f, -0.01315602f, 0.00271207f, -0.00867515f};
+static const float ROLL_MRAC_GAMMA[8] = {0.00086162f, 0.00034078f, 0.00001538f, 0.00000994f, 0.00001305f, 0.00001538f, 0.00000994f, 0.00001305f};
+static const float ROLL_MRAC_LIM[8] = {0.68792834f, 0.28792834f, 0.03802090f, 0.03384332f, 0.03622855f, 0.03802090f, 0.03384332f, 0.03622855f};
+static const float ROLL_MRAC_AM[3] = {1.00000000f, -1.63792462f, 0.68034432f};
+static const float ROLL_MRAC_BM[2] = {0.00000000f, 0.04241970f};
 #define ROLL_MRAC_SIGMA    0.05000000f
 #define ROLL_MRAC_DEADZONE 0.15000000f
 #define ROLL_MRAC_SIGN     -1.0f
 
 // ===================== PITCH =====================
-// plant: K=-6.3536 deg/deg, wn=25.040 rad/s, zeta=0.1274, delay=2 samples
+// plant: K=-6.2155 deg/deg, wn=26.220 rad/s, zeta=0.1210, delay=2 samples
 
-#define PITCH_PID_KP        -0.00105886f
-#define PITCH_PID_KI        -0.26575034f
-#define PITCH_PID_KD        -0.00066805f
+#define PITCH_PID_KP        -0.00098285f
+#define PITCH_PID_KI        -0.26712301f
+#define PITCH_PID_KD        -0.00064443f
 #define PITCH_PID_TF        0.12500000f
 
 #define PITCH_RST_NR        3
 #define PITCH_RST_NS        3
 #define PITCH_RST_NT        3
-static const float PITCH_RST_R[3] = {1.00000000f, -1.60311742f, 0.60311742f};
-static const float PITCH_RST_S[3] = {-0.01511631f, 0.01952821f, -0.01238420f};
-static const float PITCH_RST_T[3] = {-0.01511631f, 0.01952821f, -0.01238420f};
+static const float PITCH_RST_R[3] = {1.00000000f, -1.63792462f, 0.63792462f};
+static const float PITCH_RST_S[3] = {-0.01185474f, 0.01475267f, -0.00972276f};
+static const float PITCH_RST_T[3] = {-0.01185474f, 0.01475267f, -0.00972276f};
 
 #define PITCH_LQR_N         3
-static const float PITCH_LQR_KX[3] = {-0.06654650f, 0.07141255f, 0.29208311f};
-#define PITCH_LQR_KI        +0.80858064f
+static const float PITCH_LQR_KX[3] = {-0.06432036f, 0.06557829f, 0.28611321f};
+#define PITCH_LQR_KI        +0.93695438f
 
 #define PITCH_LQG_N         2
-static const float PITCH_LQG_A[4] = {1.29186413f, -0.81926066f, 1.00000000f, 0.00000000f};
+static const float PITCH_LQG_A[4] = {1.24445283f, -0.82015802f, 1.00000000f, 0.00000000f};
 static const float PITCH_LQG_B[2] = {1.00000000f, 0.00000000f};
-static const float PITCH_LQG_C[2] = {0.00000000f, -3.35084255f};
-static const float PITCH_LQG_KX[2] = {0.20194129f, -0.12710464f};
-#define PITCH_LQG_KI        +0.48556404f
-static const float PITCH_LQG_L[2] = {-0.24791653f, -0.37953163f};
+static const float PITCH_LQG_C[2] = {0.00000000f, -3.57828878f};
+static const float PITCH_LQG_KX[2] = {0.20468475f, -0.09933553f};
+#define PITCH_LQG_KI        +0.66200449f
+static const float PITCH_LQG_L[2] = {-0.19576727f, -0.33887014f};
 
 #define PITCH_MRAC_NTHETA   8
 #define PITCH_MRAC_NU       2
 #define PITCH_MRAC_NY       3
 #define PITCH_MRAC_NRF      3
-static const float PITCH_MRAC_THETA0[8] = {1.60311742f, -0.60311742f, 0.01511631f, -0.01952821f, 0.01238420f, -0.01511631f, 0.01952821f, -0.01238420f};
-static const float PITCH_MRAC_GAMMA[8] = {0.00084331f, 0.00032247f, 0.00001622f, 0.00001852f, 0.00001480f, 0.00001622f, 0.00001852f, 0.00001480f};
-static const float PITCH_MRAC_LIM[8] = {0.67330932f, 0.27330932f, 0.03810887f, 0.03987363f, 0.03701603f, 0.03810887f, 0.03987363f, 0.03701603f};
-static const float PITCH_MRAC_AM[3] = {1.00000000f, -1.60311742f, 0.65376979f};
-static const float PITCH_MRAC_BM[2] = {0.00000000f, 0.05065236f};
+static const float PITCH_MRAC_THETA0[8] = {1.63792462f, -0.63792462f, 0.01185474f, -0.01475267f, 0.00972276f, -0.01185474f, 0.01475267f, -0.00972276f};
+static const float PITCH_MRAC_GAMMA[8] = {0.00086162f, 0.00034078f, 0.00001471f, 0.00001621f, 0.00001359f, 0.00001471f, 0.00001621f, 0.00001359f};
+static const float PITCH_MRAC_LIM[8] = {0.68792834f, 0.28792834f, 0.03750039f, 0.03865956f, 0.03664760f, 0.03750039f, 0.03865956f, 0.03664760f};
+static const float PITCH_MRAC_AM[3] = {1.00000000f, -1.63792462f, 0.68034432f};
+static const float PITCH_MRAC_BM[2] = {0.00000000f, 0.04241970f};
 #define PITCH_MRAC_SIGMA    0.05000000f
 #define PITCH_MRAC_DEADZONE 0.15000000f
 #define PITCH_MRAC_SIGN     -1.0f

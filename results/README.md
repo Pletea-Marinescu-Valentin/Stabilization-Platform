@@ -12,7 +12,7 @@ anything.
 ## Provenance
 
 These are **not** hardware logs. The plant models are identified from the
-PRBS experiments in `identification/`, which are measurements on the physical
+excitation experiments in `identification/`, which are measurements on the physical
 platform; the closed-loop runs here are then evaluated on those identified
 models, reproducing the measured transport delay, the measured IMU noise and
 quantisation, and the actuator limits. `summary.json` records this in its
