@@ -31,8 +31,10 @@ def _bold_min(vals, nd=2, lower_is_better=True):
 def table_models(out):
     p = out["plants"]
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Identified axis models, $G(s)=K\omega_n^2/(s^2+2\zeta\omega_n s+\omega_n^2)\,e^{-\tau s}$.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Identified axis models, "
+        r"$G(s)=K\omega_n^2/(s^2+2\zeta\omega_n s+\omega_n^2)\,e^{-\tau s}$; "
+        r"fit is the cross-validated free-run fit.}",
         r"\label{tab:models}", r"\begin{tabular}{lccccc}", r"\toprule",
         r"Axis & $K$ [\si{\degree\per\degree}] & $\omega_n$ [\si{\radian\per\second}] & "
         r"$f_n$ [\si{\hertz}] & $\zeta$ & fit [\%] \\", r"\midrule",
@@ -48,18 +50,19 @@ def table_scenarios(out):
     short = {"Empty cup": "Empty", "Half full": "Half",
              "Three-quarters full": "3/4 full"}
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Payload scenarios. Added inertia lowers each axis resonance "
-        r"as $\sqrt{J_0/J}$, and the liquid adds a lightly damped slosh mode at "
-        r"$\omega_s$. Frequencies in \si{\radian\per\second}.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Payload scenarios. Inertia lowers each resonance as "
+        r"$\sqrt{J_0/J}$; the liquid adds a slosh mode at $\omega_s$. "
+        r"Frequencies in \si{\radian\per\second}.}",
         r"\label{tab:scenarios}", r"\setlength{\tabcolsep}{4pt}",
         r"\begin{tabular}{lccccc}", r"\toprule",
         r"Case & $m$ [\si{\gram}] & $\omega_n^{\mathrm{roll}}$ & "
         r"$\omega_n^{\mathrm{pitch}}$ & $\omega_s$ & $\zeta_s$ \\", r"\midrule",
     ]
     for r in out["scenarios"]:
-        ws = "--" if not np.isfinite(r["w_slosh"]) else f"{r['w_slosh']:.1f}"
-        zs = "--" if not np.isfinite(r["zeta_slosh"]) else f"{r['zeta_slosh']:.4f}"
+        miss = lambda v: v is None or not np.isfinite(v)
+        ws = "--" if miss(r["w_slosh"]) else f"{r['w_slosh']:.1f}"
+        zs = "--" if miss(r["zeta_slosh"]) else f"{r['zeta_slosh']:.4f}"
         label = short.get(r["label"], r["label"])
         lines.append(f"{label} & {r['mass']:.0f} & "
                      f"{r['wn_roll']:.1f} & {r['wn_pitch']:.1f} & {ws} & {zs} \\\\")
@@ -70,11 +73,9 @@ def table_verification(out):
     v = out["verification"]
     f = out["frontier"]
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{All five controllers verified against the common robustness "
-        r"specification, and their tolerance to plant error. $M_s$ is matched by "
-        r"construction; the bandwidth column is what that equal margin bought, "
-        r"and the last two columns are what the structures do \emph{not} share.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Achieved margins and plant-error tolerance. $M_s$ is matched "
+        r"by construction; $\omega_B$ is what that equal margin bought.}",
         r"\label{tab:verification}", r"\begin{tabular}{llccccc}", r"\toprule",
         r"Axis & Ctrl & $\omega_B$ & $M_s$ & PM & $\Delta K$ & $\Delta\omega_n$ \\",
         r" & & [\si{\radian\per\second}] & & [\si{\degree}] & [\si{\decibel}] & [\%] \\",
@@ -104,7 +105,7 @@ def table_results(out, window, caption, label, fname):
     keys = [("RMSE", "RMSE", 2), ("IAE", "IAE", 1), ("peak", "Peak", 2),
             ("effort", "Effort", 2)]
     lines = [
-        r"\begin{table}[ht]", r"\centering", f"\\caption{{{caption}}}",
+        r"\begin{table}[!ht]", r"\centering", f"\\caption{{{caption}}}",
         f"\\label{{{label}}}", r"\footnotesize",
         r"\setlength{\tabcolsep}{3pt}",
         r"\begin{tabular}{ll" + "c" * (len(keys) * 1) + r"c}", r"\toprule",
@@ -140,10 +141,9 @@ def table_results(out, window, caption, label, fname):
 
 def table_scores_compact(out):
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Composite score in every case, normalised against the "
-        r"best controller of that case (1.00 = best, 2.00 = twice its cost). "
-        r"Lower is better; bold marks the best of each column.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Composite score, normalised against the best controller of "
+        r"each case (1.00 = best). Lower is better; bold marks each column's best.}",
         r"\label{tab:scores}", r"\footnotesize", r"\setlength{\tabcolsep}{4pt}",
         r"\begin{tabular}{ll ccc ccc}", r"\toprule",
         r"& & \multicolumn{3}{c}{Roll} & \multicolumn{3}{c}{Pitch} \\",
@@ -190,12 +190,11 @@ def table_raw_pitch(out):
             fill_effect, worst = pct, n
 
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Pitch axis, disturbance window: raw metrics in degrees. "
-        r"Filling the cup moves RMSE by at most "
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Pitch, disturbance window: raw metrics in degrees. Filling "
+        r"the cup moves RMSE by at most "
         f"\\SI{{{fill_effect:.1f}}}{{\\percent}} ({CONTROLLER_LABELS[worst]}), "
-        r"so what separates the rows is the control structure and not the "
-        r"payload.}",
+        r"so the rows are separated by structure, not payload.}",
         r"\label{tab:rawpitch}", r"\footnotesize",
         r"\begin{tabular}{lcccccc}", r"\toprule",
         r"& \multicolumn{2}{c}{Empty} & \multicolumn{2}{c}{Half full} & "
@@ -216,10 +215,9 @@ def table_raw_pitch(out):
 def table_cost(out):
     c = out["cost"]
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Cost of one controller update: floating-point operations and the "
-        r"resulting time on the \SI{600}{\mega\hertz} Cortex-M7, against a "
-        r"\SI{31.25}{\milli\second} budget.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Cost of one update on the \SI{600}{\mega\hertz} Cortex-M7, "
+        r"against a \SI{31.25}{\milli\second} budget.}",
         r"\label{tab:cost}", r"\begin{tabular}{lccc}", r"\toprule",
         r"Controller & flops & time [\si{\micro\second}] & budget [\%] \\", r"\midrule",
     ]
@@ -232,9 +230,9 @@ def table_cost(out):
 
 def table_sensitivity(out):
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Share of random weight vectors, drawn uniformly from the simplex, "
-        r"for which each controller attains the best composite score.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Share of weight vectors drawn uniformly from the simplex for "
+        r"which each controller scores best.}",
         r"\label{tab:sensitivity}", r"\begin{tabular}{ll" + "c" * len(CONTROLLERS) + "}", r"\toprule",
         r"Axis & Window & " + " & ".join(CONTROLLER_LABELS[n] for n in CONTROLLERS)
         + r" \\", r"\midrule",
@@ -255,14 +253,11 @@ def table_sensitivity(out):
 
 def table_slosh(out):
     lines = [
-        r"\begin{table}[ht]", r"\centering",
-        r"\caption{Slosh-mode stability, predicted on the identified axis model "
-        r"with the analytical slosh doublet added; the empty cup has no free "
-        r"surface, hence no such mode, and does not appear. "
-        r"$\zeta_s^{\mathrm{crit}}$ is the least liquid damping for which the "
-        r"loop remains stable; the margin is $\zeta_s/\zeta_s^{\mathrm{crit}}$. "
-        r"Bold marks the largest margin of each row; underlined values are below "
-        r"one, that is, the predicted margin does not cover the liquid present.}",
+        r"\begin{table}[!ht]", r"\centering",
+        r"\caption{Slosh margin $\zeta_s/\zeta_s^{\mathrm{crit}}$, predicted with "
+        r"the analytical doublet added; $\zeta_s^{\mathrm{crit}}$ is the least "
+        r"liquid damping that keeps the loop stable. Bold marks the largest of "
+        r"each row, underline a margin below one. The empty cup has no such mode.}",
         r"\label{tab:slosh}", r"\begin{tabular}{ll" + "c" * len(CONTROLLERS) + "}", r"\toprule",
         r"Axis & Case & " + " & ".join(CONTROLLER_LABELS[n] for n in CONTROLLERS)
         + r" \\", r"\midrule",

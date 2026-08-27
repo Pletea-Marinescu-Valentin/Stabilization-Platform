@@ -106,8 +106,6 @@ def load_run(exp: Experiment, axis: str, ts=TS) -> RunResult:
     if e is None:
         e = _wrap180(TARGET[axis] - y_raw)
 
-    # Resample onto the uniform analysis grid; hardware logs are close to
-    # uniform but not exactly, and every metric here assumes a fixed step.
     n = int(round(min(t[-1], T_TOTAL) / ts))
     grid = np.arange(n) * ts
     e_u = np.interp(grid, t, e)
