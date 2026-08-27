@@ -472,8 +472,6 @@ def design_lqr(plant: AxisPlant, ts=TS, wc=WC, zeta=ZETA) -> LQRDesign:
         return np.array([4.0 * np.log(max(bw, 1e-6) / bw_target),
                          4.0 * max(ms - 1.30, 0.0)])
 
-    # The weight surface has local minima that trap a purely local search, so
-    # start from the best point of a coarse grid and refine from there.
     starts, best_cost = [], np.inf
     for lqy in np.linspace(-6.0, 10.0, 24):
         for lqi in np.linspace(-4.0, 12.0, 24):
@@ -629,6 +627,35 @@ def slosh_stability(plant, designs, scenario, ts=TS, z_max=0.15, n=300):
 MS_TARGET = 1.30
 LTR_GRID = (1.0, 10.0, 100.0, 1000.0)
 
+def _sweep_weights(evaluate, y_range, i_range, ms_target, n=26, rounds=5):
+    best, best_w = None, None
+    ys = np.linspace(*y_range, n)
+    xs = np.linspace(*i_range, n)
+    for lqy in ys:
+        for lqi in xs:
+            c = evaluate(lqy, lqi)
+            if c is None or c[2] > ms_target:
+                continue
+            if best is None or c[1] > best[1]:
+                best, best_w = c, (lqy, lqi)
+    if best is None:
+        return None, None
+
+    span_y = (y_range[1] - y_range[0]) / (n - 1)
+    span_i = (i_range[1] - i_range[0]) / (n - 1)
+    for _ in range(rounds):
+        lqy, lqi = best_w
+        for a in np.linspace(lqy - span_y, lqy + span_y, 5):
+            for b in np.linspace(lqi - span_i, lqi + span_i, 5):
+                c = evaluate(a, b)
+                if c is None or c[2] > ms_target:
+                    continue
+                if c[1] > best[1]:
+                    best, best_w = c, (a, b)
+        span_y *= 0.5
+        span_i *= 0.5
+    return best, best_w
+
 def design_lqg_max_bandwidth(plant: AxisPlant, ms_target=1.30, ts=TS,
                              ltr=1.0, n=26):
     A, B, C, _ = plant_ss(plant)
@@ -644,29 +671,26 @@ def design_lqg_max_bandwidth(plant: AxisPlant, ms_target=1.30, ts=TS,
     Pf = solve_discrete_are(A.T, C.T, Qn, Rn)
     L = (A @ Pf @ C.T) @ np.linalg.inv(C @ Pf @ C.T + Rn)
 
-    best = None
-    for lqy in np.linspace(-6, 6, n):
-        for lqi in np.linspace(-4, 10, n):
-            try:
-                Q = np.exp(lqy) * (Ca.T @ Ca)
-                Q[nx, nx] += np.exp(lqi)
-                P = solve_discrete_are(Aa, Ba, Q + 1e-9 * np.eye(nx + 1),
-                                       np.array([[1.0]]))
-                K = np.linalg.solve(np.array([[1.0]]) + Ba.T @ P @ Ba,
-                                    Ba.T @ P @ Aa)
-                d = LQGDesign(A=A, B=B, C=C, Kx=K[:, :nx], Ki=float(K[0, nx]),
-                              L=L, ts=ts, q_y=float(np.exp(lqy)),
-                              q_i=float(np.exp(lqi)), meas_var=meas_var,
-                              proc_var=proc_var, ltr=float(ltr))
-                if np.max(np.abs(np.linalg.eigvals(d.closed_loop(plant)))) >= 0.9995:
-                    continue
-                bw, ms, mt = loop_metrics(plant, d.response, ts)
-            except Exception:
-                continue
-            if ms > ms_target + 0.01:
-                continue
-            if best is None or bw > best[1]:
-                best = (d, bw, ms, mt)
+    def evaluate(lqy, lqi):
+        try:
+            Q = np.exp(lqy) * (Ca.T @ Ca)
+            Q[nx, nx] += np.exp(lqi)
+            P = solve_discrete_are(Aa, Ba, Q + 1e-9 * np.eye(nx + 1),
+                                   np.array([[1.0]]))
+            K = np.linalg.solve(np.array([[1.0]]) + Ba.T @ P @ Ba,
+                                Ba.T @ P @ Aa)
+            d = LQGDesign(A=A, B=B, C=C, Kx=K[:, :nx], Ki=float(K[0, nx]),
+                          L=L, ts=ts, q_y=float(np.exp(lqy)),
+                          q_i=float(np.exp(lqi)), meas_var=meas_var,
+                          proc_var=proc_var, ltr=float(ltr))
+            if np.max(np.abs(np.linalg.eigvals(d.closed_loop(plant)))) >= 0.9995:
+                return None
+            bw, ms, mt = loop_metrics(plant, d.response, ts)
+        except Exception:
+            return None
+        return (d, bw, ms, mt)
+
+    best, _ = _sweep_weights(evaluate, (-6, 6), (-4, 10), ms_target, n)
     if best is None:
         raise RuntimeError("no LQG design meets the robustness target")
     return best
@@ -685,28 +709,25 @@ def design_lqr_measured(plant: AxisPlant, ms_target=1.30, ts=TS, n=26):
     Ba = np.vstack([B, np.zeros((1, 1))])
     Ca = np.hstack([C, np.zeros((1, 1))])
 
-    best = None
-    for lqy in np.linspace(-6, 8, n):
-        for lqi in np.linspace(-4, 10, n):
-            try:
-                Q = np.exp(lqy) * (Ca.T @ Ca)
-                Q[nx, nx] += np.exp(lqi)
-                P = solve_discrete_are(Aa, Ba, Q + 1e-9 * np.eye(nx + 1),
-                                       np.array([[1.0]]))
-                K = np.linalg.solve(np.array([[1.0]]) + Ba.T @ P @ Ba,
-                                    Ba.T @ P @ Aa)
-                d = LQRDesign(A=A, B=B, C=C, Kx=K[:, :nx], Ki=float(K[0, nx]),
-                              ts=ts, q_y=float(np.exp(lqy)),
-                              q_i=float(np.exp(lqi)))
-                if np.max(np.abs(np.linalg.eigvals(d.closed_loop(plant)))) >= 0.9995:
-                    continue
-                bw, ms, mt = loop_metrics(plant, d.response, ts)
-            except Exception:
-                continue
-            if ms > ms_target + 0.01:
-                continue
-            if best is None or bw > best[1]:
-                best = (d, bw, ms, mt)
+    def evaluate(lqy, lqi):
+        try:
+            Q = np.exp(lqy) * (Ca.T @ Ca)
+            Q[nx, nx] += np.exp(lqi)
+            P = solve_discrete_are(Aa, Ba, Q + 1e-9 * np.eye(nx + 1),
+                                   np.array([[1.0]]))
+            K = np.linalg.solve(np.array([[1.0]]) + Ba.T @ P @ Ba,
+                                Ba.T @ P @ Aa)
+            d = LQRDesign(A=A, B=B, C=C, Kx=K[:, :nx], Ki=float(K[0, nx]),
+                          ts=ts, q_y=float(np.exp(lqy)),
+                          q_i=float(np.exp(lqi)))
+            if np.max(np.abs(np.linalg.eigvals(d.closed_loop(plant)))) >= 0.9995:
+                return None
+            bw, ms, mt = loop_metrics(plant, d.response, ts)
+        except Exception:
+            return None
+        return (d, bw, ms, mt)
+
+    best, _ = _sweep_weights(evaluate, (-6, 8), (-4, 10), ms_target, n)
     if best is None:
         raise RuntimeError("no LQR design meets the robustness target")
     return best
@@ -778,9 +799,28 @@ def _candidate(plant, name, wc, zeta, ts, ltr=1.0):
     bw, ms, mt = loop_metrics(plant, resp, ts)
     return dict(design=d, bw=bw, ms=ms, mt=mt, wc=float(wc), ltr=float(ltr))
 
+def _refine_wc(plant, name, best, step, zeta, ts, ms_target, rounds=6, n=9):
+    span = step
+    for _ in range(rounds):
+        centre = best["wc"]
+        for wc in np.linspace(centre - span, centre + span, n):
+            if wc <= 0.0:
+                continue
+            try:
+                c = _candidate(plant, name, float(wc), zeta, ts)
+            except Exception:
+                continue
+            if c is None or c["ms"] > ms_target:
+                continue
+            if c["bw"] > best["bw"]:
+                best = c
+        span *= 0.5
+    return best
+
 def design_equal_robustness(plant: AxisPlant, ms_target=MS_TARGET, zeta=0.85,
-                            ts=TS, wc_lo=1.0, wc_hi=26.0, n_grid=26):
+                            ts=TS, wc_lo=1.0, wc_hi=26.0, n_grid=51):
     grid = np.linspace(wc_lo, wc_hi, n_grid)
+    step = float(grid[1] - grid[0])
     out, meta = {}, {}
 
     for name in ("pid", "rst"):
@@ -790,18 +830,19 @@ def design_equal_robustness(plant: AxisPlant, ms_target=MS_TARGET, zeta=0.85,
                 c = _candidate(plant, name, wc, zeta, ts)
             except Exception:
                 continue
-            if c is None or c["ms"] > ms_target + 0.01:
+            if c is None or c["ms"] > ms_target:
                 continue
             if best is None or c["bw"] > best["bw"]:
                 best = c
         if best is None:
             raise RuntimeError(f"no {name} design meets Ms <= {ms_target}")
+        best = _refine_wc(plant, name, best, step, zeta, ts, ms_target)
         if name == "pid":
             refit = design_pid(plant, ts, best["wc"], zeta, fast=False)
             poles = np.roots(_cl_poly(plant, *refit.tf_polys()))
             if np.max(np.abs(poles)) < 0.9995:
                 bw, ms, mt = loop_metrics(plant, refit.response, ts)
-                if ms <= ms_target + 0.01 and bw >= best["bw"]:
+                if ms <= ms_target and bw >= best["bw"]:
                     best = dict(design=refit, bw=bw, ms=ms, mt=mt,
                                 wc=best["wc"], ltr=1.0)
         out[name] = best["design"]
