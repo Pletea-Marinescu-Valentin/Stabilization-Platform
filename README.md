@@ -12,23 +12,57 @@ This repository contains the embedded firmware, the Python design and
 analysis toolchain, and the experimental datasets behind a comparative study
 of **PID, RST, LQR, LQG and MRAC**. The point of the study is that all five
 are held to the **same robustness constraint** — an identical peak
-sensitivity `Ms` — with closed-loop bandwidth left as the free variable. A
-comparison that instead fixes the performance specification lets a structure
-buy performance by quietly accepting a thinner stability margin, and the
-same five designs under that protocol put the pitch PID at `Ms = 1.60`
-against `1.25` for the model-based ones.
+sensitivity `Ms = 1.30` — with closed-loop bandwidth left as the free
+variable. A comparison that instead fixes the performance specification lets
+a structure buy performance by quietly accepting a thinner stability margin,
+and the same five designs under that protocol put the pitch PID at
+`Ms = 1.59` and the pitch LQG at `1.69` against `1.25`–`1.30` for the other
+three.
 
 ## What is measured and what is computed
 
-- **Measured on the hardware:** the PRBS identification records in
+- **Measured on the hardware:** the two identification records in
   `identification/roll_id.csv` and `identification/pitch_id.csv`. Each axis
-  was excited with a 1 deg pseudo-random binary sequence for 60 s at 32 Hz,
-  and the axis models are estimated from those two records.
+  was excited for 61 s by a square wave on the position increment whose
+  amplitude climbs in 21 steps from 0.05 to 1.05 deg (41 alternating holds of
+  0.73–1.90 s), logged at a nominal 32 Hz. The axis models are estimated from
+  those two records and nothing else.
 - **Computed on the identified models:** everything else. The design step and
   its loop analysis (the `Ms` constraint, the achievable bandwidths, the
   slosh-mode margins), and the closed-loop runs themselves, which are
-  evaluated on the identified models with the measured transport delay, the
-  measured IMU noise and quantisation, and the actuator limits.
+  evaluated on the identified models with the identified transport delay,
+  a conservative IMU noise and quantisation model, and the actuator limits.
+
+## Identification
+
+`tools/identification.py` is the whole story for the plant models, and
+`python -m tools.identification` prints its full diagnostic report. It
+
+- resamples each record onto the uniform grid of its **own** mean sample
+  interval (31.65 ms measured against the nominal 31.25 ms, 4 % jitter),
+  estimates in continuous time, and re-discretises at the control period;
+- high-passes `u` and `y` through the same zero-phase 0.1 Hz filter, which
+  removes up to 4.9 deg of drift on roll without touching the excitation band
+  or the dynamics between the two channels;
+- scores every candidate `(na, nb, d)` by **blocked five-fold
+  cross-validation on the free-run simulation fit** — never one-step-ahead
+  prediction — and rejects any model that is unstable, places a pole below
+  the prefilter cutoff, or disagrees with the Welch estimate of the measured
+  frequency response by more than 35 % in static gain or 5 dB rms;
+- restricts the design class to `na <= 2, nb = 1` so the state stays directly
+  measurable, and **reports what that restriction costs** (0.4 cross-validation
+  points on pitch, 5.6 on roll);
+- reports the things that do not flatter the model: residual whiteness
+  (Ljung-Box, autocorrelation and input cross-correlation), the coherence
+  ceiling, and the amplitude dependence of the roll gain.
+
+Both axes select a **two-sample transport delay (62.5 ms)**, chosen by
+cross-validation rather than assumed. The resulting models:
+
+| Axis | `K` [deg/deg] | `ωn` [rad/s] | `fn` [Hz] | `ζ` | fit (5-fold CV) |
+|---|---|---|---|---|---|
+| Roll | −2.219 | 46.67 | 7.43 | 0.143 | 58.2 % ± 14.0 |
+| Pitch | −6.215 | 26.22 | 4.17 | 0.121 | 78.3 % ± 6.3 |
 
 The closed-loop comparison is therefore model-based, not a hardware
 experiment, and `results/summary.json` records this in its `source` field.
@@ -141,7 +175,8 @@ every fill level against the same sequence.
 ```
 tools/                 design and analysis in Python
   config.py              all rates, limits and the common specification, defined once
-  identification.py      output-error identification with order selection
+  identification.py      output-error identification, cross-validated order and
+                         delay selection, frequency-response screening
   plant.py               axis models, payload scaling, liquid slosh mode
   design.py              the five syntheses, loop analysis, robustness frontier
   controllers.py         discrete control laws, written as the firmware runs them
@@ -157,7 +192,7 @@ firmware/
   arduino_uno/           height axis and the servo disturbance rig
 
 dashboard/               live telemetry UI (BLE / USB serial)
-identification/          the two PRBS records the models are estimated from
+identification/          the two excitation records the models are estimated from
 results/                 generated: run CSVs, metrics, summary, LaTeX tables
 experiments/             optional: closed-loop logs measured on the platform
 ```
@@ -196,19 +231,27 @@ reports how often each controller wins under randomly redrawn weights.
 
 ## Design notes
 
-- Sampling is **32 Hz** (31.25 ms), released by a hardware timer; the logged
-  runs come in at 32.0 ± 1.4 ms, 2.4 % slow with 4.4 % jitter, and are
-  resampled onto the nominal grid before any metric is computed. The
-  identified **two-sample transport delay (62.5 ms)** is the binding
-  constraint on achievable bandwidth.
+- Sampling is **32 Hz** (31.25 ms), released by a hardware timer. Any logged
+  record is resampled onto a uniform grid before a metric or a model is
+  computed. The identified **two-sample transport delay (62.5 ms)** is the
+  binding constraint on achievable bandwidth.
 - Controller gains in `firmware/teensy/controller_params.h` come from
   `tools/export_firmware.py`, which emits the same equal-robustness designs
   the study reports, so the coefficients that run are the ones that were
   analysed. Select a law over serial with `0`-`4`; the mode switch resets
   both axes.
-- The identified numerator zero is not statistically identifiable (it moves
-  from -0.30 to -2.32 across sub-records), so both axes are modelled as
-  minimum-phase second-order resonances with delay.
+- The numerator zero is not statistically identifiable. Refitted on six
+  contiguous sub-records it ranges over `[-2.15, -0.92]` on roll and
+  `[-1.67, +24.2]` on pitch, crossing the unit circle either way, so a free
+  numerator produces apparent non-minimum-phase behaviour the data do not
+  support. Both axes are therefore modelled as second-order resonances with
+  delay and no numerator dynamics — which is also what makes the LQR
+  implementable without an estimator.
+- Two limits are reported rather than hidden: the residuals are not white on
+  either axis (Ljung-Box p < 0.001), and the roll gain depends on excitation
+  amplitude (`K = -2.99` on the small-amplitude half of the record against
+  `-2.02` on the large, a 3.3 dB spread) against a thinnest design gain
+  tolerance of 6.6 dB.
 
 ---
 
