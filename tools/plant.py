@@ -62,15 +62,17 @@ class AxisPlant:
         return self.delay * self.ts
 
 def axis_plant_from_identification(axis: str, verbose=True) -> AxisPlant:
-    model = identify_axis(axis, na=2, nb=1, verbose=False)
-    wn, zeta = model.continuous_modes()
-    plant = AxisPlant(axis=axis, K=model.dc_gain, wn=float(wn[0]), zeta=float(zeta[0]),
-                      delay=model.delay, ts=TS, fit_valid=model.fit_valid,
+    model = identify_axis(axis, verbose=False)
+    df = model.design_form
+    plant = AxisPlant(axis=axis, K=df["K"], wn=df["wn"], zeta=df["zeta"],
+                      delay=df["delay"], ts=df["ts"], fit_valid=model.fit_valid,
                       noise_std=model.noise_std)
     if verbose:
         print(f"[{axis}] K={plant.K:+.3f} deg/deg   wn={plant.wn:.2f} rad/s "
               f"({plant.wn/2/np.pi:.2f} Hz)   zeta={plant.zeta:.3f}   "
-              f"tau={plant.delay_seconds*1000:.1f} ms   fit(valid)={plant.fit_valid:.1f}%")
+              f"tau={plant.delay_seconds*1000:.1f} ms   "
+              f"OE(na={model.na}, nb={model.nb}, d={model.delay})   "
+              f"fit(cv)={model.cv_mean:.1f}+-{model.cv_std:.1f}%")
     return plant
 
 @dataclass

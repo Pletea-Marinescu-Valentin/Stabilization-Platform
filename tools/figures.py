@@ -41,22 +41,41 @@ def _save(fig, name):
     plt.close(fig)
 
 def fig_identification(plants):
-    from .identification import load_prbs
+    from .identification import (COHERENCE_FLOOR, etfe, identify_axis,
+                                 prepare_axis)
 
-    fig, axes = plt.subplots(2, 1, figsize=(COL, 2.9), sharex=False)
-    for ax_obj, axis in zip(axes, AXES):
-        t, u, y = load_prbs(axis)
-        p = plants[axis]
-        yhat = p.model_output(u)
-        split = int(0.7 * len(y))
-        sl = slice(split, min(split + 500, len(y)))
-        ax_obj.plot(t[sl] - t[sl][0], y[sl], color="0.25", lw=0.9, label="measured")
-        ax_obj.plot(t[sl] - t[sl][0], yhat[sl], color="#C44E52", lw=0.9,
-                    ls="--", label=f"model ({p.fit_valid:.0f}\\%)")
-        ax_obj.set_ylabel(f"{axis} [deg]")
-        ax_obj.legend(loc="upper right", ncol=2, frameon=False,
-                      handlelength=1.6, borderaxespad=0.2)
-    axes[-1].set_xlabel("time [s]")
+    fig, axes = plt.subplots(2, 2, figsize=(COL * 2, 3.2),
+                             gridspec_kw=dict(width_ratios=[1.25, 1]))
+    for row, axis in enumerate(AXES):
+        t, u, y, ts, _ = prepare_axis(axis)
+        m = identify_axis(axis, verbose=False)
+        sp = etfe(u, y, ts)
+
+        a = axes[row][0]
+        split = int(0.72 * len(y))
+        sl = slice(split, min(split + 420, len(y)))
+        a.plot(t[sl] - t[sl][0], y[sl], color="0.25", lw=0.9, label="measured")
+        a.plot(t[sl] - t[sl][0], m.model_output(u)[sl], color="#C44E52", lw=0.9,
+               ls="--", label=f"model ({m.cv_mean:.0f}\\%)")
+        a.set_ylabel(f"{axis} [deg]")
+        a.legend(loc="upper right", ncol=2, frameon=False, handlelength=1.6,
+                 borderaxespad=0.2)
+
+        b = axes[row][1]
+        f = sp["f"][1:]
+        b.loglog(f, sp["mag"][1:], color="0.6", lw=0.7, label="measured")
+        b.loglog(f, np.abs(m.frequency_response(2 * np.pi * f)), color="#C44E52",
+                 lw=1.0, label="model")
+        low = sp["coh"][1:] < COHERENCE_FLOOR
+        b.fill_between(f, 1e-3, 1e3, where=low, color="0.85", lw=0, zorder=0)
+        b.set_ylim(max(sp["mag"][1:].min(), 1e-2), sp["mag"][1:].max() * 2.5)
+        b.set_xlim(f[0], f[-1])
+        b.set_ylabel(r"$|G|$ [deg/deg]")
+        if row == 0:
+            b.legend(loc="lower left", frameon=False, handlelength=1.6)
+
+    axes[1][0].set_xlabel("time [s]")
+    axes[1][1].set_xlabel("frequency [Hz]")
     _save(fig, "identification")
 
 def fig_design_check(plants, designs):
@@ -84,7 +103,7 @@ def fig_design_check(plants, designs):
     _save(fig, "sensitivity")
 
 def fig_error_traces(runs, axis, scenario, name):
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(COL, 2.7), sharex=True,
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(COL, 1.72), sharex=True,
                                  gridspec_kw=dict(height_ratios=[1, 0.55]))
     ref = runs[(axis, scenario, "pid")]
     a1.plot(ref.t, ref.d, color="0.65", lw=0.8, label="base tilt")
