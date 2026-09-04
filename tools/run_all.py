@@ -10,8 +10,10 @@ from .config import (AXES, CONTROLLER_LABELS, CONTROLLERS, FIGURES, RESULTS,
                      SCENARIOS, TS, T_DIST_START, T_TOTAL, T_TRACK_END, WC, ZETA)
 from . import controllers as ctrl_mod
 from . import metrics as met
-from .design import (MS_TARGET, design_all, design_equal_robustness,
-                     reference_bandwidth, robustness_frontier, verify_designs)
+from .design import (MS_TARGET, damping_remedy, design_all,
+                     design_equal_robustness, pid_granularity,
+                     reference_bandwidth, robustness_frontier,
+                     sensitivity_integral, separation_check, verify_designs)
 from .plant import describe_scenarios, fit_all, payload_variant
 from .simulate import simulate
 from . import uncertainty as unc
@@ -65,6 +67,36 @@ def run_everything(verbose=True):
             print(f"  [{ax}] " + "  ".join(
                 f"{n}: BW={a.bandwidth:.2f} Ms={a.modulus_margin:.2f}"
                 for n, a in fv.items()))
+
+    if verbose:
+        print("\n2c. Loop shape beyond Ms, and how finely PID can spend it")
+    out["sensitivity_integral"] = {
+        ax: sensitivity_integral(plants[ax], designs[ax]) for ax in AXES}
+    out["pid_granularity"] = {
+        ax: pid_granularity(plants[ax], wc_centre=dmeta[ax]["pid"]["wc"])
+        for ax in AXES}
+    if verbose:
+        for ax in AXES:
+            si = out["sensitivity_integral"][ax]["integral"]
+            print(f"  [{ax}] integral of |S| over 0.2-4 Hz: " +
+                  "  ".join(f"{n}={si[n]:.1f}" for n in sorted(si, key=si.get)))
+            g = out["pid_granularity"][ax]
+            if g:
+                print(f"  [{ax}] PID fastest feasible Ms={g['ms_best']:.3f} at "
+                      f"BW={g['bw_best']:.2f}; the next faster design "
+                      f"(BW={g['bw_next']:.2f}) costs Ms={g['ms_next']:.3f}")
+
+    if verbose:
+        print("\n2d. Does the LQG loop actually separate?")
+    out["lqg_separation"] = {
+        ax: separation_check(plants[ax], designs[ax]["lqg"]) for ax in AXES}
+    if verbose:
+        for ax in AXES:
+            sp = out["lqg_separation"][ax]
+            print(f"  [{ax}] {sp['n_predicted']} regulator+estimator poles vs "
+                  f"{sp['n_assembled']} assembled, max mismatch "
+                  f"{sp['max_mismatch']:.1e}, {sp['unmatched']} unmatched; "
+                  f"slowest observer pole {sp['observer_pole']:.2f}")
 
     out["verification"] = {ax: {n: vars(a) for n, a in v.items()}
                            for ax, v in verification.items()}
@@ -133,6 +165,16 @@ def run_everything(verbose=True):
                     cz = r[n]["critical_zeta"]
                     bits.append(f"{n}: zc={cz:.4f}" if cz else f"{n}: unstable")
                 print(f"  {ax:5s} {sc:5s} zeta_s={r['actual']:.4f} | " + "  ".join(bits))
+
+    if verbose:
+        print("\n5b. What a better-damped inner loop would buy on pitch")
+    out["damping_remedy"] = damping_remedy(plants["pitch"])
+    if verbose:
+        zeta_to = out["damping_remedy"]["zeta_to"]
+        for sc, mg in out["damping_remedy"]["margin"].items():
+            print(f"  pitch {sc:5s} at zeta={zeta_to}: " +
+                  "  ".join(f"{n}={mg[n]:.2f}" if mg[n] else f"{n}=inf"
+                            for n in CONTROLLERS))
 
     if verbose:
         print("\n6. Identification uncertainty and ranking stability")

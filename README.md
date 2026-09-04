@@ -19,6 +19,14 @@ and the same five designs under that protocol put the pitch PID at
 `Ms = 1.59` and the pitch LQG at `1.69` against `1.25`–`1.30` for the other
 three.
 
+All ten loops land within `0.003` of the target. Getting there needs a dense
+sweep rather than a bisection: PID has three gains for a fourth-order pole
+placement, so its achieved `Ms` is a *jagged* function of the design
+parameter — on roll it steps from `1.299` to `1.313` between adjacent designs
+— and a bisection stops short of the budget, leaving PID slower than it need
+be. `tools/design.py::pid_granularity` reports that step, and
+`_refine_wc` ends with a dense local pass for exactly this reason.
+
 ## What is measured and what is computed
 
 - **Measured on the hardware:** the two identification records in
@@ -54,7 +62,11 @@ three.
   points on pitch, 5.6 on roll);
 - reports the things that do not flatter the model: residual whiteness
   (Ljung-Box, autocorrelation and input cross-correlation), the coherence
-  ceiling, and the amplitude dependence of the roll gain.
+  ceiling, and the amplitude dependence of the roll gain;
+- checks that the numerator it drops is really not there
+  (`numerator_stability`): refitted with `nb = 2` the added zero lands at
+  `-0.07` on roll and `-0.004` on pitch, and changes sign between contiguous
+  sub-records, so the data do not determine it.
 
 Both axes select a **two-sample transport delay (62.5 ms)**, chosen by
 cross-validation rather than assumed. The resulting models:
@@ -86,8 +98,9 @@ python -m tools.export_firmware  # regenerate firmware/teensy/controller_params.
 ```
 
 `run_all` writes per-run CSVs and `metrics.csv` into `results/`, the LaTeX
-tables into `results/tables/` and the figures into `paper/figures/` (the
-manuscript itself lives outside this repository). The generated results are
+tables into `results/tables/` and the figures into `paper/figures/`, where
+`paper/main.tex` includes them directly (`paper/` is not tracked here). The
+generated results are
 committed, so the numbers in the paper can be checked without running
 anything; see `results/README.md`.
 
@@ -150,7 +163,7 @@ with `t = 0` at the first logged sample. Total run length 80 s.
 | 71 s | 80 s | +3 deg, held |
 
 Everything from 20 s on is the *disturbance* window. Amplitudes stay under
-the 11.3 deg at which the roll axis would saturate. Run every controller and
+the 11.1 deg at which the roll axis would saturate. Run every controller and
 every fill level against the same sequence.
 
 ---

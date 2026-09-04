@@ -13,9 +13,9 @@
 // ===================== ROLL =====================
 // plant: K=-2.2187 deg/deg, wn=46.671 rad/s, zeta=0.1428, delay=2 samples
 
-#define ROLL_PID_KP        -0.00326176f
-#define ROLL_PID_KI        -1.79537457f
-#define ROLL_PID_KD        -0.00256669f
+#define ROLL_PID_KP        -0.00720655f
+#define ROLL_PID_KI        -1.86736124f
+#define ROLL_PID_KD        -0.00218399f
 #define ROLL_PID_TF        0.12500000f
 
 #define ROLL_RST_NR        3

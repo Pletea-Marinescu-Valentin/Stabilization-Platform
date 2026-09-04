@@ -31,5 +31,6 @@ If closed-loop logs measured on the platform are placed in `experiments/`,
 | `tables/*.tex` | the LaTeX tables the paper includes verbatim |
 
 Run CSV columns: `time_s`, `base_tilt_deg` (the disturbance applied),
-`angle_deg` (platform angle), `angle_meas_deg` (after noise and the
-0.0625 deg quantiser), `error_deg`, `command_deg`.
+`angle_deg` (platform angle), `error_deg`, `command_deg`. The noise and the
+0.0625 deg quantiser act inside the loop, on the signal the controller reads;
+`angle_deg` is the true angle.

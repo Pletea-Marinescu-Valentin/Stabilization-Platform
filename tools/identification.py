@@ -490,6 +490,47 @@ def amplitude_split(axis, structure, ts, cutoff=HP_CUTOFF_HZ):
     return out
 
 
+def numerator_stability(axis, structure, ts, n_blocks=6, cutoff=HP_CUTOFF_HZ):
+    """How well determined is the numerator that the design class drops?
+
+    Refits the selected structure with one extra numerator coefficient, on the
+    whole record and on `n_blocks` contiguous sub-records, and reports where the
+    dominant zero lands.  A zero that leaves the unit circle, or that wanders
+    between sub-records, is not supported by the data.
+    """
+    t, u, y, _, _ = prepare_axis(axis, cutoff)
+    na, nb, d = structure["na"], structure["nb"] + 1, structure["d"]
+    try:
+        full = fit_oe(u, y, na, nb, d, ts, axis)
+    except Exception:
+        return {}
+
+    def dominant(m):
+        z = m.zeros()
+        return complex(z[np.argmax(np.abs(z))]) if len(z) else complex("nan")
+
+    z_full = dominant(full)
+    n = len(y)
+    blocks = []
+    for i in range(n_blocks):
+        sl = slice(i * n // n_blocks, (i + 1) * n // n_blocks)
+        try:
+            blocks.append(dominant(fit_oe(u[sl], y[sl], na, nb, d, ts, axis)))
+        except Exception:
+            continue
+    if not blocks:
+        return {}
+    mods = np.abs(np.array(blocks))
+    return dict(na=na, nb=nb, d=d, n_blocks=len(blocks),
+                zero_full=[float(z_full.real), float(z_full.imag)],
+                modulus_full=float(abs(z_full)),
+                nmp_full=bool(abs(z_full) > 1.0),
+                modulus_min=float(mods.min()), modulus_max=float(mods.max()),
+                nmp_blocks=int(np.sum(mods > 1.0)),
+                real=[float(z.real) for z in blocks],
+                modulus=[float(m) for m in mods])
+
+
 def identify_axis(axis: str, na=None, nb=None, d=None, na_max=DESIGN_NA,
                   nb_max=DESIGN_NB, verbose=True) -> AxisModel:
     key = (axis, na, nb, d, na_max, nb_max)
@@ -580,7 +621,8 @@ def full_report(axis: str, na_max=DESIGN_NA, nb_max=DESIGN_NB):
                    zeros=np.abs(model.zeros()).tolist()),
         design_form=to_design_form(model),
         residuals=residual_tests(model, u, y),
-        amplitude=amplitude_split(axis, best, ts))
+        amplitude=amplitude_split(axis, best, ts),
+        numerator=numerator_stability(axis, best, ts))
 
 
 if __name__ == "__main__":
@@ -641,6 +683,15 @@ if __name__ == "__main__":
                   f"large |u|={am['large']['amp']:.2f}: K={am['large']['K']:+.2f} "
                   f"wn={am['large']['wn']:.1f} fit={am['large']['fit']:.0f}%  "
                   f"(K ratio {am['K_ratio']:.2f})")
+        nz = r["numerator"]
+        if nz:
+            print(f"  numerator extra coefficient (nb={nz['nb']}): dominant zero "
+                  f"{nz['zero_full'][0]:+.2f}{nz['zero_full'][1]:+.2f}j "
+                  f"|z|={nz['modulus_full']:.2f}"
+                  f"{' (non-minimum-phase)' if nz['nmp_full'] else ''}; over "
+                  f"{nz['n_blocks']} sub-records |z| in "
+                  f"[{nz['modulus_min']:.2f},{nz['modulus_max']:.2f}], "
+                  f"{nz['nmp_blocks']} of them outside the unit circle")
         print("  rejected structures:")
         for row in r["structure"]["table"]:
             if not row["plausible"]:

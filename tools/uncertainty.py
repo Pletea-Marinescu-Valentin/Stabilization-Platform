@@ -99,6 +99,7 @@ def ranking_stability(nominal: AxisPlant, designs, boot, ts=TS):
                 unresolved=[k for k, v in pct.items()
                             if v < 95.0 and k not in tied],
                 ms_median=float(np.median(ms_max)) if ms_max else float("nan"),
+                ms_worst=float(np.max(ms_max)) if ms_max else float("nan"),
                 ms_p95=float(np.percentile(ms_max, 95)) if ms_max else float("nan"),
                 ms_over2_pct=100.0 * unstable / d)
 
@@ -113,8 +114,8 @@ def study(plants, designs, n_draws=200, verbose=True):
         if verbose:
             print(f"  [{ax}] fastest {rank['fastest_pct']:.0f}%, slowest "
                   f"{rank['slowest_pct']:.0f}%, full order "
-                  f"{rank['full_order_pct']:.0f}% of draws; median worst Ms "
-                  f"{rank['ms_median']:.2f}")
+                  f"{rank['full_order_pct']:.0f}% of draws; worst Ms "
+                  f"{rank['ms_worst']:.2f} (median {rank['ms_median']:.2f})")
             n_cmp = len(rank["pairwise_pct"]) - len(rank["tied"])
             print(f"        {len(rank['resolved'])}/{n_cmp} separable pairs "
                   f"resolved at 95% ({len(rank['tied'])} tied by construction: "

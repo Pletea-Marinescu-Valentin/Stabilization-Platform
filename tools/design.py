@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy.linalg import solve_discrete_are
 from scipy.optimize import least_squares
 from scipy.signal import lfilter, tf2ss
 
-from .config import TS, WC, ZETA
+from .config import CONTROLLERS, SCENARIOS, TS, WC, ZETA
 from .plant import AxisPlant
 
 STEP_HORIZON = 4.0
@@ -799,11 +799,10 @@ def _candidate(plant, name, wc, zeta, ts, ltr=1.0):
     bw, ms, mt = loop_metrics(plant, resp, ts)
     return dict(design=d, bw=bw, ms=ms, mt=mt, wc=float(wc), ltr=float(ltr))
 
-def _refine_wc(plant, name, best, step, zeta, ts, ms_target, rounds=6, n=9):
-    span = step
-    for _ in range(rounds):
-        centre = best["wc"]
-        for wc in np.linspace(centre - span, centre + span, n):
+def _refine_wc(plant, name, best, step, zeta, ts, ms_target, rounds=6, n=9,
+               dense=81):
+    def scan(values, best):
+        for wc in values:
             if wc <= 0.0:
                 continue
             try:
@@ -814,7 +813,20 @@ def _refine_wc(plant, name, best, step, zeta, ts, ms_target, rounds=6, n=9):
                 continue
             if c["bw"] > best["bw"]:
                 best = c
+        return best
+
+    span = step
+    for _ in range(rounds):
+        best = scan(np.linspace(best["wc"] - span, best["wc"] + span, n), best)
         span *= 0.5
+
+    # A bisection assumes Ms falls monotonically as the design slows down, and
+    # for PID it does not: three gains cannot meet a fourth-order pole placement
+    # exactly, so the achieved Ms is a jagged function of wc and the halving
+    # search can stop well inside the budget.  One dense local pass costs a few
+    # seconds and makes the comparison fair to the structure that needs it most.
+    if dense:
+        best = scan(np.linspace(best["wc"] - step, best["wc"] + step, dense), best)
     return best
 
 def design_equal_robustness(plant: AxisPlant, ms_target=MS_TARGET, zeta=0.85,
@@ -900,6 +912,102 @@ def design_all_equal_robustness(plant: AxisPlant, ms_limit=MS_LIMIT,
     out["mrac"] = design_mrac(plant, ts, wc_rst, zeta)
     meta["mrac"] = dict(**meta["rst"])
     return out, meta
+
+def sensitivity_integral(plant: AxisPlant, designs: dict, ts=TS,
+                         band_hz=(0.20, 4.0), n=800):
+    """Area under |S| over the disturbance band, one entry per controller.
+
+    Ms equalises the worst case; this says how each design spends the rest of
+    the Bode waterbed, so the ordering here need not be the bandwidth ordering.
+    """
+    w = 2 * np.pi * np.logspace(np.log10(band_hz[0]), np.log10(band_hz[1]), n)
+    out = {}
+    for name in CONTROLLERS:
+        L = -controller_response(name, designs)(w) * plant_response(plant, w, ts=ts)
+        out[name] = float(np.trapezoid(np.abs(1.0 / (1.0 + L)), w))
+    return dict(band_hz=list(band_hz), integral=out)
+
+
+def separation_check(plant: AxisPlant, lqg, slosh=None):
+    """Do the assembled LQG closed-loop poles split into regulator + estimator?
+
+    The separation principle says they should, but the paper asserts it, so
+    check it: build the full plant-plus-controller loop, then match every
+    predicted pole to its nearest assembled one.  A mismatch at machine
+    precision and no unmatched pole means the split is exact on this model.
+    """
+    assembled = list(np.linalg.eigvals(lqg.closed_loop(plant, slosh)))
+    predicted = lqg.separation_poles()
+    errors = []
+    for pole in predicted:
+        i = int(np.argmin([abs(pole - a) for a in assembled]))
+        errors.append(abs(pole - assembled.pop(i)))
+    return dict(n_predicted=len(predicted),
+                n_assembled=len(predicted) + len(assembled),
+                max_mismatch=float(max(errors)) if errors else float("nan"),
+                unmatched=len(assembled),
+                observer_pole=float(max(abs(p) for p in
+                                        np.linalg.eigvals(lqg.A - lqg.L @ lqg.C))))
+
+
+def pid_granularity(plant: AxisPlant, ms_target=MS_TARGET, zeta=0.85, ts=TS,
+                    wc_centre=None, half_width=0.5, step=0.01):
+    """How finely can the PID spend the Ms budget?
+
+    PID has three parameters for a fourth-order loop, so the achieved Ms is not
+    a smooth function of its design parameter: adjacent designs step over the
+    target rather than approaching it.  Sweeps densely around the design the
+    synthesis settled on and reports the fastest feasible loop together with
+    the cheapest faster one, which is over budget.
+    """
+    if wc_centre is None:
+        _, meta = design_equal_robustness(plant, ms_target, zeta, ts)
+        wc_centre = meta["pid"]["wc"]
+    wc_lo, wc_hi = max(step, wc_centre - half_width), wc_centre + half_width
+    wcs, ms, bw = [], [], []
+    for w in np.arange(wc_lo, wc_hi, step):
+        try:
+            c = _candidate(plant, "pid", float(w), zeta, ts)
+        except Exception:
+            continue
+        if c is None:
+            continue
+        wcs.append(float(w)); ms.append(c["ms"]); bw.append(c["bw"])
+    if not ms:
+        return {}
+    ms = np.array(ms); bw = np.array(bw); wcs = np.array(wcs)
+    feas = ms <= ms_target
+    if not feas.any():
+        return {}
+    i = int(np.argmax(np.where(feas, bw, -np.inf)))
+    # the neighbouring design that would have been faster, had it been feasible
+    j = np.where((bw > bw[i]) & ~feas)[0]
+    return dict(step=float(step), ms_target=float(ms_target),
+                wc_best=float(wcs[i]), ms_best=float(ms[i]), bw_best=float(bw[i]),
+                ms_below=float(ms[feas].max()),
+                ms_above=float(ms[~feas].min()) if (~feas).any() else float("nan"),
+                wc_next=float(wcs[j[np.argmin(bw[j])]]) if len(j) else float("nan"),
+                ms_next=float(ms[j[np.argmin(bw[j])]]) if len(j) else float("nan"),
+                bw_next=float(bw[j[np.argmin(bw[j])]]) if len(j) else float("nan"))
+
+
+def damping_remedy(plant: AxisPlant, zeta_new=0.25, ms_target=MS_TARGET, ts=TS):
+    """What raising the drive's own position-loop damping would buy.
+
+    The slosh margin is a property of the plant the outer loop sees, so a
+    better-damped inner loop lifts it without touching the outer controller.
+    """
+    better = replace(plant, zeta=float(zeta_new))
+    designs, _ = design_equal_robustness(better, ms_target, ts=ts)
+    out = {}
+    for sc in SCENARIOS:
+        r = slosh_stability(better, designs, sc)
+        if r is None:
+            continue
+        out[sc] = {n: (r["actual"] / r[n]["critical_zeta"]
+                       if r[n]["critical_zeta"] else None) for n in CONTROLLERS}
+    return dict(zeta_from=float(plant.zeta), zeta_to=float(zeta_new), margin=out)
+
 
 def verify_designs(plant: AxisPlant, designs: dict, ts=TS, wc=WC, zeta=ZETA):
     n = int(STEP_HORIZON / ts)
